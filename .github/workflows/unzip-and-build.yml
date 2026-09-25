@@ -25,9 +25,13 @@ jobs:
             exit 1
           fi
 
-      - name: Entpacken (überschreibt bestehende Dateien im Repo)
+      - name: Entpacken (überschreibt bestehende Dateien im Repo, außer .github/workflows)
         run: |
-          unzip -o "${{ github.event.inputs.zip_file }}" -d .
+          # .github/workflows/* wird bewusst NICHT aus dem Zip übernommen: der Standard-
+          # GITHUB_TOKEN darf Workflow-Dateien nicht per Push ändern (GitHub-Sicherheitsregel,
+          # "refusing to allow a GitHub App to create or update workflow ... without
+          # workflows permission"). Workflow-Dateien immer manuell per Web-UI hochladen.
+          unzip -o "${{ github.event.inputs.zip_file }}" -d . -x ".github/workflows/*"
           rm -f "${{ github.event.inputs.zip_file }}"
 
       - name: Änderungen committen und pushen
