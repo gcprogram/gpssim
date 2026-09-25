@@ -16,8 +16,10 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Android-SDK-Lizenzen akzeptieren und benötigte Pakete installieren
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "build-tools;35.0.0"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -35,3 +37,4 @@ jobs:
         with:
           name: gps-simulator-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+          
