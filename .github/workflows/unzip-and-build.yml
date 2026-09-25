@@ -1,0 +1,43 @@
+name: Unzip and build
+
+on:
+  workflow_dispatch:
+    inputs:
+      zip_file:
+        description: "Name der Zip-Datei im Repo-Root, die entpackt werden soll"
+        required: true
+        default: "gps-simulator.zip"
+
+permissions:
+  contents: write
+
+jobs:
+  unzip:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prüfen, ob die Zip-Datei existiert
+        run: |
+          if [ ! -f "${{ github.event.inputs.zip_file }}" ]; then
+            echo "Datei '${{ github.event.inputs.zip_file }}' nicht im Repo-Root gefunden."
+            echo "Erst per 'Add file -> Upload files' hochladen, dann diesen Workflow erneut starten."
+            exit 1
+          fi
+
+      - name: Entpacken (überschreibt bestehende Dateien im Repo)
+        run: |
+          unzip -o "${{ github.event.inputs.zip_file }}" -d .
+          rm -f "${{ github.event.inputs.zip_file }}"
+
+      - name: Änderungen committen und pushen
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Keine Änderungen nach dem Entpacken - nichts zu committen."
+          else
+            git commit -m "Entpackt: ${{ github.event.inputs.zip_file }}"
+            git push
+          fi
