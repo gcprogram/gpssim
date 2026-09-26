@@ -1,11 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!-- Standard-Location-Permissions: nötig, damit die App selbst Positionsdaten lesen
          und über LocationManager als Mock-Provider auftreten darf -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+
+    <!-- Wird vom OS selbst seit API 23 nicht mehr durchgesetzt, aber die Developer-Options-
+         Seite "Select mock location app" filtert die angezeigten Apps trotzdem danach - ohne
+         diese Deklaration taucht die App in der Liste gar nicht erst auf -->
+    <uses-permission android:name="android.permission.ACCESS_MOCK_LOCATION"
+        tools:ignore="MockLocation,ProtectedPermissions" />
 
     <!-- Für den Foreground-Service, der die Mock-Positions-Updates am Laufen hält -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />

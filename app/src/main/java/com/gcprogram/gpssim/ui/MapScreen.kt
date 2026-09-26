@@ -1,6 +1,9 @@
 package com.gcprogram.gpssim.ui
 
+import android.content.Intent
 import android.graphics.Color
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -11,8 +14,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -23,6 +28,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -44,15 +50,47 @@ import com.gcprogram.gpssim.geo.CoordinateParser
 import com.gcprogram.gpssim.geo.TrackPoint
 import com.gcprogram.gpssim.location.MockLocationController
 import com.gcprogram.gpssim.location.MockLocationService
+import com.gcprogram.gpssim.offline.OfflineMapManager
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.osmdroid.events.MapEventsReceiver
+import org.osmdroid.mapsforge.MapsForgeTileProvider
+import org.osmdroid.mapsforge.MapsForgeTileSource
+import org.osmdroid.tileprovider.MapTileProviderBasic
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
+import org.osmdroid.tileprovider.util.SimpleRegisterReceiver
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.MapEventsOverlay
 import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polyline
+import java.io.File
+
+/** Schaltet die Karte auf eine lokale Mapsforge-.map-Datei um (kein Netzwerkzugriff mehr). */
+private fun switchToOfflineMap(mapView: MapView, mapFile: File): Boolean {
+    return try {
+        val tileSource = MapsForgeTileSource.createFromFiles(arrayOf(mapFile), null, null)
+        val provider = MapsForgeTileProvider(SimpleRegisterReceiver(mapView.context), tileSource, null)
+        mapView.tileProvider.detach()
+        mapView.setTileProvider(provider)
+        mapView.setUseDataConnection(false)
+        mapView.invalidate()
+        true
+    } catch (e: Exception) {
+        false
+    }
+}
+
+/** Schaltet zurück auf Online-OSM-Tiles (Mapnik). */
+private fun switchToOnlineMap(mapView: MapView) {
+    mapView.tileProvider.detach()
+    mapView.setTileProvider(MapTileProviderBasic(mapView.context))
+    mapView.setTileSource(TileSourceFactory.MAPNIK)
+    mapView.setUseDataConnection(true)
+    mapView.invalidate()
+}
 
 @Composable
 fun MapScreen() {
@@ -67,6 +105,8 @@ fun MapScreen() {
     var speedKmh by remember { mutableStateOf("5.0") }
     var isRunning by remember { mutableStateOf(false) }
     var statusText by remember { mutableStateOf("Kein Track gesetzt") }
+    var isOfflineMode by remember { mutableStateOf(false) }
+    var offlineMapName by remember { mutableStateOf(OfflineMapManager.currentMapDisplayName(context)) }
 
     val mapView = remember { MapView(context) }
 
@@ -112,6 +152,41 @@ fun MapScreen() {
                 return true
             }
         })
+    }
+
+    // Dateipicker für Mapsforge-.map-Dateien (SAF, kein READ_EXTERNAL_STORAGE nötig).
+    // Die Datei wird gestreamt ins App-Verzeichnis kopiert (OfflineMapManager), danach
+    // sofort auf Offline-Darstellung umgeschaltet.
+    val pickMapLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            scope.launch(Dispatchers.IO) {
+                try {
+                    context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                } catch (e: SecurityException) {
+                    // Manche Dokumentanbieter erlauben keine dauerhafte Freigabe - unkritisch,
+                    // wir kopieren die Datei ja sofort ins App-Verzeichnis.
+                }
+                val importedFile = try {
+                    OfflineMapManager.importMap(context, uri)
+                } catch (e: Exception) {
+                    null
+                }
+                withContext(Dispatchers.Main) {
+                    if (importedFile != null) {
+                        offlineMapName = OfflineMapManager.currentMapDisplayName(context)
+                        val ok = switchToOfflineMap(mapView, importedFile)
+                        isOfflineMode = ok
+                        statusText = if (ok) {
+                            "Offline-Karte aktiv: $offlineMapName"
+                        } else {
+                            "Offline-Karte konnte nicht geladen werden (Datei evtl. kein gültiges Mapsforge-.map-Format)"
+                        }
+                    } else {
+                        statusText = "Datei konnte nicht importiert werden"
+                    }
+                }
+            }
+        }
     }
 
     // MapView-Lebenszyklus an Compose/Activity koppeln (onResume/onPause), sonst laufen Tile-Downloads
@@ -220,6 +295,39 @@ fun MapScreen() {
                             statusText = "Track geleert"
                         }) {
                             Icon(Icons.Default.Clear, contentDescription = "Track leeren")
+                        }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Button(onClick = { pickMapLauncher.launch(arrayOf("*/*")) }) {
+                            Icon(Icons.Default.CloudOff, contentDescription = null)
+                            Spacer(Modifier.width(4.dp))
+                            Text(if (offlineMapName != null) "Andere Offline-Karte" else "Offline-Karte wählen")
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(if (isOfflineMode) "Offline" else "Online", style = MaterialTheme.typography.bodySmall)
+                            Switch(
+                                checked = isOfflineMode,
+                                enabled = offlineMapName != null,
+                                onCheckedChange = { checked ->
+                                    if (checked) {
+                                        val file = OfflineMapManager.currentMapFile(context)
+                                        if (file != null && switchToOfflineMap(mapView, file)) {
+                                            isOfflineMode = true
+                                            statusText = "Offline-Karte aktiv: $offlineMapName"
+                                        } else {
+                                            statusText = "Keine gültige Offline-Karte vorhanden"
+                                        }
+                                    } else {
+                                        switchToOnlineMap(mapView)
+                                        isOfflineMode = false
+                                        statusText = "Online-Karte aktiv"
+                                    }
+                                }
+                            )
                         }
                     }
                     Text(statusText, style = MaterialTheme.typography.bodySmall)

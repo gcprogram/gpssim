@@ -57,6 +57,10 @@ dependencies {
 
     // osmdroid für Offline/Online OSM-Karten (wie in GCToolkit-Android)
     implementation("org.osmdroid:osmdroid-android:6.1.20")
+    // Bridge, die Mapsforge-.map-Dateien als osmdroid-Tile-Source rendert (Offline-Karten,
+    // z.B. von openandromaps.de oder download.mapsforge.org). Bringt die passende
+    // Mapsforge-Version transitiv mit.
+    implementation("org.osmdroid:osmdroid-mapsforge:6.1.20")
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 
