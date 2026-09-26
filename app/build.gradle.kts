@@ -61,6 +61,11 @@ dependencies {
     // z.B. von openandromaps.de oder download.mapsforge.org). Bringt die passende
     // Mapsforge-Version transitiv mit.
     implementation("org.osmdroid:osmdroid-mapsforge:6.1.20")
+    // Explizit nötig für org.mapsforge.map.reader.MapDatabase (Bounding-Box-Ermittlung beim
+    // Umschalten auf Offline-Karten in MapScreen.kt) - wird von osmdroid-mapsforge NICHT
+    // transitiv auf den Compile-Classpath des App-Moduls exportiert.
+    implementation("org.mapsforge:mapsforge-map-reader:0.18.0")
+    implementation("org.mapsforge:mapsforge-core:0.18.0")
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 
