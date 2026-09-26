@@ -67,7 +67,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.mapsforge.map.reader.MapDatabase
+import org.mapsforge.map.reader.MapFile
 import org.osmdroid.events.MapEventsReceiver
 import org.osmdroid.mapsforge.MapsForgeTileProvider
 import org.osmdroid.mapsforge.MapsForgeTileSource
@@ -89,16 +89,18 @@ import java.io.File
  * geladen ist, und es sieht so aus als würde nichts angezeigt (die Kacheln existieren dort einfach nicht).
  */
 private fun readMapBounds(mapFile: File): BoundingBox? {
-    val database = MapDatabase()
+    // Hinweis: die Klasse hieß in älteren Mapsforge-Versionen "MapDatabase" mit
+    // openFile()/mapFileInfo - in der hier verwendeten Version (0.18+) heißt sie "MapFile"
+    // und liefert die Bounding-Box direkt über boundingBox().
+    var mapFileHandle: MapFile? = null
     return try {
-        val openResult = database.openFile(mapFile)
-        if (!openResult.isSuccess) return null
-        val bbox = database.mapFileInfo.boundingBox
+        mapFileHandle = MapFile(mapFile)
+        val bbox = mapFileHandle.boundingBox()
         BoundingBox(bbox.maxLatitude, bbox.maxLongitude, bbox.minLatitude, bbox.minLongitude)
     } catch (e: Exception) {
         null
     } finally {
-        database.closeFile()
+        mapFileHandle?.close()
     }
 }
 
