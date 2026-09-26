@@ -21,11 +21,25 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.sin
+import kotlin.math.sqrt
+import kotlin.random.Random
 
 /**
  * Foreground-Service, der die von MockLocationController berechnete Position
  * per LocationManager-Test-Provider als GPS-Position ausgibt. Setzt voraus,
  * dass die App in den Entwickleroptionen als "Mock location app" gewählt ist.
+ *
+ * WICHTIG für das An/Aus-Verhalten der Simulation (gesteuert über den Play/Pause-Button
+ * in MapScreen, siehe MockLocationController.start()/stop() + MockLocationService.start()/stop()):
+ * addTestProvider()/setTestProviderEnabled() passiert NUR hier in onCreate(), wenn der Service
+ * tatsächlich gestartet wird - also erst wenn Play gedrückt wird. removeTestProvider() passiert
+ * in onDestroy(), also beim Stoppen (Pause). Solange die Simulation nicht läuft, ist GPS_PROVIDER
+ * ganz normal die echte Geräteposition; erst während einer laufenden Simulation "kapert" die App
+ * GPS_PROVIDER systemweit für alle Apps. Play/Pause ist damit bereits der An/Aus-Schalter für die
+ * eigentliche Mock-Funktion, nicht nur für die Bewegungssimulation.
  */
 class MockLocationService : Service() {
 
@@ -93,11 +107,13 @@ class MockLocationService : Service() {
 
     private fun pushMockLocation(lat: Double, lon: Double, bearing: Float, speed: Float) {
         try {
+            val jitterOn = MockLocationController.jitterEnabled.value
+            val (reportedLat, reportedLon) = if (jitterOn) applyJitter(lat, lon) else lat to lon
             val location = Location(LocationManager.GPS_PROVIDER).apply {
-                latitude = lat
-                longitude = lon
+                latitude = reportedLat
+                longitude = reportedLon
                 altitude = 0.0
-                accuracy = 5f
+                accuracy = if (jitterOn) JITTER_MAX_METERS.toFloat() else 5f
                 this.bearing = bearing
                 this.speed = speed
                 time = System.currentTimeMillis()
@@ -107,6 +123,21 @@ class MockLocationService : Service() {
         } catch (e: SecurityException) {
             Log.e(TAG, "setTestProviderLocation fehlgeschlagen - Mock-Location-Berechtigung verloren?", e)
         }
+    }
+
+    /**
+     * Zufälliger Versatz innerhalb eines Kreises mit JITTER_MAX_METERS Radius, gleichverteilt
+     * über die Fläche (sqrt(random) statt random als Radius-Faktor) - simuliert die übliche
+     * Positionsungenauigkeit echter GPS-Empfänger. Wirkt NUR auf die gemeldete Position, der
+     * simulierte Track/Marker im UI bleibt exakt auf dem gewählten Weg.
+     */
+    private fun applyJitter(lat: Double, lon: Double): Pair<Double, Double> {
+        val radiusMeters = sqrt(Random.nextDouble()) * JITTER_MAX_METERS
+        val angle = Random.nextDouble(0.0, 2 * PI)
+        val dLat = (radiusMeters * cos(angle)) / METERS_PER_DEGREE_LAT
+        val metersPerDegreeLon = METERS_PER_DEGREE_LAT * cos(Math.toRadians(lat)).coerceAtLeast(0.01)
+        val dLon = (radiusMeters * sin(angle)) / metersPerDegreeLon
+        return (lat + dLat) to (lon + dLon)
     }
 
     private fun tearDownMockProvider() {
@@ -138,6 +169,8 @@ class MockLocationService : Service() {
         private const val TAG = "MockLocationService"
         private const val CHANNEL_ID = "gps_sim_channel"
         private const val NOTIFICATION_ID = 1001
+        private const val JITTER_MAX_METERS = 5.0
+        private const val METERS_PER_DEGREE_LAT = 111320.0
 
         fun start(context: Context) {
             val intent = Intent(context, MockLocationService::class.java)

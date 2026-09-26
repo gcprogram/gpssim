@@ -19,8 +19,18 @@ im GC-Freitextformat einfügen, Track auf der Karte antippen, Simulation starten
 - Koordinaten im Format `N49° 12.345 E008° 40.123` (oder ohne °, mit Komma) ins
   obere Feld einfügen → "Als Wegpunkt hinzufügen".
 - Alternativ: auf die Karte tippen, um einen Wegpunkt zu setzen.
-- Mind. 2 Wegpunkte ergeben einen linearen Track. Geschwindigkeit in km/h eintragen.
+- Mind. 2 Wegpunkte ergeben einen linearen Track. Geschwindigkeit per Icon wählen:
+  Fußgänger (5 km/h), Fahrrad (18 km/h), Auto (60 km/h), Rakete (siehe unten).
+- "Rakete": teleportiert pro Segment praktisch sofort bis 100 m vor den nächsten Wegpunkt
+  und legt nur die letzten 100 m in Fahrradgeschwindigkeit zurück. Ist ein Segment kürzer
+  als 100 m, wird es komplett in Fahrradgeschwindigkeit gefahren statt zu teleportieren.
+- "Jitter ±5m": legt beim Melden der Position einen zufälligen Versatz bis 5 m drauf, um
+  echtes GPS-Rauschen zu simulieren. Wirkt nur auf die an das OS gemeldete Position - der
+  angezeigte Track/Marker in der App bleibt exakt auf dem gewählten Weg.
 - Play/Pause-FAB startet/stoppt die Simulation, ohne die Kartenansicht zu verschieben.
+  Das ist zugleich der An/Aus-Schalter für die Mock-Location-Übernahme selbst: erst mit
+  Play übernimmt die App systemweit `GPS_PROVIDER`, mit Pause/Stop bekommen andere Apps
+  wieder die echte Geräteposition.
 - Der Zielscheiben-FAB zentriert die Karte manuell auf die aktuelle simulierte Position.
 - "Track leeren" (X-Button) setzt die Wegpunktliste zurück.
 - "Offline-Karte wählen": öffnet den System-Dateipicker für eine Mapsforge-`.map`-Datei
@@ -33,15 +43,18 @@ im GC-Freitextformat einfügen, Track auf der Karte antippen, Simulation starten
 
 - Wegpunkte lassen sich aktuell nur hinzufügen, nicht einzeln per Tap wieder entfernen
   oder verschieben - bei Bedarf ergänzen.
-- Kein Geschwindigkeits-Rauschen/GPS-Jitter simuliert (bewusst einfach gehalten).
 - Icon ist ein Platzhalter (System-Icon), kein eigenes App-Icon.
+- Karte startet zentriert auf der letzten bekannten echten Position (Fallback: Berlin,
+  falls keine Berechtigung/kein Fix vorliegt).
 - Offline-Kartenauswahl merkt sich nur eine Karte gleichzeitig (Datei wird beim nächsten
   Import überschrieben) - kein Verwaltungsscreen für mehrere Karten.
 
 ## Architektur
 
 - `geo/CoordinateParser.kt` - Parser für GC-Freitextformat WGS84 (DMM)
-- `geo/TrackSimulator.kt` - lineare Bewegung entlang der Wegpunktliste, 1s-Ticks
+- `geo/SpeedPreset.kt` - die vier Geschwindigkeits-Presets (Fußgänger/Fahrrad/Auto/Rakete)
+- `geo/TrackSimulator.kt` - lineare Bewegung entlang der Wegpunktliste, 1s-Ticks,
+  inkl. Rocket-Teleport-Logik pro Segment
 - `location/MockLocationController.kt` - prozessweiter Singleton, verbindet UI und Service
 - `location/MockLocationService.kt` - Foreground-Service, schreibt Position über
   `LocationManager`-Test-Provider auf `GPS_PROVIDER`

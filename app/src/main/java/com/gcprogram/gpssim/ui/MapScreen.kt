@@ -1,9 +1,14 @@
 package com.gcprogram.gpssim.ui
 
+import android.Manifest
+import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Color
+import android.location.LocationManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,11 +23,16 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.CloudOff
+import androidx.compose.material.icons.filled.DirectionsBike
+import androidx.compose.material.icons.filled.DirectionsCar
+import androidx.compose.material.icons.filled.DirectionsWalk
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.RocketLaunch
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.FilledIconToggleButton
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -44,9 +54,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.gcprogram.gpssim.geo.CoordinateParser
+import com.gcprogram.gpssim.geo.SpeedPreset
 import com.gcprogram.gpssim.geo.TrackPoint
 import com.gcprogram.gpssim.location.MockLocationController
 import com.gcprogram.gpssim.location.MockLocationService
@@ -55,18 +67,40 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.mapsforge.map.reader.MapDatabase
 import org.osmdroid.events.MapEventsReceiver
 import org.osmdroid.mapsforge.MapsForgeTileProvider
 import org.osmdroid.mapsforge.MapsForgeTileSource
 import org.osmdroid.tileprovider.MapTileProviderBasic
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.tileprovider.util.SimpleRegisterReceiver
+import org.osmdroid.util.BoundingBox
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.MapEventsOverlay
 import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polyline
 import java.io.File
+
+/**
+ * Liest den geografischen Abdeckungsbereich einer Mapsforge-.map-Datei aus deren Header.
+ * Wird gebraucht, um die Karte nach dem Umschalten auf den tatsächlich abgedeckten Bereich
+ * zu zentrieren - sonst bleibt die Ansicht z.B. auf Berlin stehen, während eine Österreich-Karte
+ * geladen ist, und es sieht so aus als würde nichts angezeigt (die Kacheln existieren dort einfach nicht).
+ */
+private fun readMapBounds(mapFile: File): BoundingBox? {
+    val database = MapDatabase()
+    return try {
+        val openResult = database.openFile(mapFile)
+        if (!openResult.isSuccess) return null
+        val bbox = database.mapFileInfo.boundingBox
+        BoundingBox(bbox.maxLatitude, bbox.maxLongitude, bbox.minLatitude, bbox.minLongitude)
+    } catch (e: Exception) {
+        null
+    } finally {
+        database.closeFile()
+    }
+}
 
 /** Schaltet die Karte auf eine lokale Mapsforge-.map-Datei um (kein Netzwerkzugriff mehr). */
 private fun switchToOfflineMap(mapView: MapView, mapFile: File): Boolean {
@@ -76,6 +110,10 @@ private fun switchToOfflineMap(mapView: MapView, mapFile: File): Boolean {
         mapView.tileProvider.detach()
         mapView.setTileProvider(provider)
         mapView.setUseDataConnection(false)
+        // Auf den Abdeckungsbereich der Karte zentrieren - sonst bleibt ggf. der Default-
+        // Kartenausschnitt (Berlin) stehen, obwohl die Kartendatei einen ganz anderen
+        // Bereich abdeckt und dort schlicht nichts anzuzeigen ist.
+        readMapBounds(mapFile)?.let { bounds -> mapView.zoomToBoundingBox(bounds, false) }
         mapView.invalidate()
         true
     } catch (e: Exception) {
@@ -92,6 +130,36 @@ private fun switchToOnlineMap(mapView: MapView) {
     mapView.invalidate()
 }
 
+/**
+ * Letzte bekannte ECHTE Position (GPS/Netzwerk), als Startpunkt für die Karte.
+ * Wichtig: das funktioniert nur, solange die Simulation nicht läuft - sobald
+ * MockLocationService aktiv ist, liefert GPS_PROVIDER die simulierte statt der echten
+ * Position (siehe Kommentar dort). Beim App-Start ist der Service noch nicht gestartet,
+ * daher liefert diese Abfrage hier zuverlässig die echte Position.
+ */
+private fun lastKnownRealLocation(context: Context): GeoPoint? {
+    val hasPermission = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
+        PackageManager.PERMISSION_GRANTED ||
+        ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) ==
+        PackageManager.PERMISSION_GRANTED
+    if (!hasPermission) return null
+
+    val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return null
+    val providers = listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER, LocationManager.PASSIVE_PROVIDER)
+    var newest: android.location.Location? = null
+    for (provider in providers) {
+        try {
+            if (!locationManager.isProviderEnabled(provider)) continue
+            val loc = locationManager.getLastKnownLocation(provider) ?: continue
+            if (newest == null || loc.time > newest.time) newest = loc
+        } catch (e: SecurityException) {
+            // Berechtigung evtl. noch nicht final erteilt (Race mit dem Permission-Dialog beim
+            // allerersten App-Start) - dann bleibt es beim Fallback-Zentrum
+        }
+    }
+    return newest?.let { GeoPoint(it.latitude, it.longitude) }
+}
+
 @Composable
 fun MapScreen() {
     val context = LocalContext.current
@@ -102,7 +170,8 @@ fun MapScreen() {
     val waypoints = remember { mutableStateListOf<TrackPoint>() }
 
     var pasteText by remember { mutableStateOf("") }
-    var speedKmh by remember { mutableStateOf("5.0") }
+    var selectedSpeedPreset by remember { mutableStateOf(SpeedPreset.WALK) }
+    var jitterEnabled by remember { mutableStateOf(false) }
     var isRunning by remember { mutableStateOf(false) }
     var statusText by remember { mutableStateOf("Kein Track gesetzt") }
     var isOfflineMode by remember { mutableStateOf(false) }
@@ -224,6 +293,16 @@ fun MapScreen() {
         }
     }
 
+    // Startpunkt der Karte: echte GPS/Netzwerk-Position statt eines festen Orts.
+    // Läuft einmalig nach dem ersten Aufbau der Karte (siehe lastKnownRealLocation()
+    // für die Einschränkung solange die Simulation noch nicht aktiv ist).
+    LaunchedEffect(Unit) {
+        lastKnownRealLocation(context)?.let { point ->
+            mapView.controller.setCenter(point)
+            mapView.invalidate()
+        }
+    }
+
     Scaffold(
         floatingActionButton = {
             Column(horizontalAlignment = Alignment.End) {
@@ -242,9 +321,11 @@ fun MapScreen() {
                         if (waypoints.size < 2) {
                             statusText = "Mindestens 2 Wegpunkte nötig (Karte antippen oder Koordinaten einfügen)"
                         } else {
-                            val speed = speedKmh.replace(',', '.').toDoubleOrNull() ?: 5.0
-                            MockLocationController.setSpeedMps(speed / 3.6)
+                            // Reihenfolge wichtig: Preset vor Track setzen, damit der Rocket-Modus
+                            // den Sprung zum Endanflug schon beim initialen setTrack() berechnet
+                            MockLocationController.setSpeedPreset(selectedSpeedPreset)
                             MockLocationController.setTrack(waypoints.toList())
+                            MockLocationController.setJitterEnabled(jitterEnabled)
                             MockLocationService.start(context)
                             MockLocationController.start()
                         }
@@ -283,18 +364,48 @@ fun MapScreen() {
                         }) {
                             Text("Als Wegpunkt hinzufügen")
                         }
-                        OutlinedTextField(
-                            value = speedKmh,
-                            onValueChange = { speedKmh = it },
-                            label = { Text("km/h") },
-                            modifier = Modifier.padding(start = 8.dp)
-                        )
                         Button(onClick = {
                             waypoints.clear()
                             redrawTrack()
                             statusText = "Track geleert"
                         }) {
                             Icon(Icons.Default.Clear, contentDescription = "Track leeren")
+                        }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        // Geschwindigkeits-Presets statt Zahleneingabe: Fußgänger/Fahrrad/Auto/Rakete
+                        // (Rakete = Sonderlogik in TrackSimulator, siehe SpeedPreset.kt)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            FilledIconToggleButton(
+                                checked = selectedSpeedPreset == SpeedPreset.WALK,
+                                onCheckedChange = { if (it) selectedSpeedPreset = SpeedPreset.WALK }
+                            ) { Icon(Icons.Default.DirectionsWalk, contentDescription = SpeedPreset.WALK.label) }
+                            FilledIconToggleButton(
+                                checked = selectedSpeedPreset == SpeedPreset.BIKE,
+                                onCheckedChange = { if (it) selectedSpeedPreset = SpeedPreset.BIKE }
+                            ) { Icon(Icons.Default.DirectionsBike, contentDescription = SpeedPreset.BIKE.label) }
+                            FilledIconToggleButton(
+                                checked = selectedSpeedPreset == SpeedPreset.CAR,
+                                onCheckedChange = { if (it) selectedSpeedPreset = SpeedPreset.CAR }
+                            ) { Icon(Icons.Default.DirectionsCar, contentDescription = SpeedPreset.CAR.label) }
+                            FilledIconToggleButton(
+                                checked = selectedSpeedPreset == SpeedPreset.ROCKET,
+                                onCheckedChange = { if (it) selectedSpeedPreset = SpeedPreset.ROCKET }
+                            ) { Icon(Icons.Default.RocketLaunch, contentDescription = SpeedPreset.ROCKET.label) }
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Jitter ±5m", style = MaterialTheme.typography.bodySmall)
+                            Switch(
+                                checked = jitterEnabled,
+                                onCheckedChange = { checked ->
+                                    jitterEnabled = checked
+                                    MockLocationController.setJitterEnabled(checked)
+                                }
+                            )
                         }
                     }
                     Row(
@@ -341,7 +452,7 @@ fun MapScreen() {
                             setTileSource(TileSourceFactory.MAPNIK)
                             setMultiTouchControls(true)
                             controller.setZoom(16.0)
-                            controller.setCenter(GeoPoint(52.5200, 13.4050)) // Default: Berlin, bis erster Punkt gesetzt ist
+                            controller.setCenter(GeoPoint(52.5200, 13.4050)) // Fallback-Default, bis lastKnownRealLocation() (falls verfügbar) übernimmt
                             overlays.add(mapEventsOverlay)
                             overlays.add(trackPolyline)
                         }
