@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.weight
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.CloudOff
@@ -447,7 +448,11 @@ fun MapScreen() {
                 }
             }
 
-            Box(modifier = Modifier.fillMaxSize()) {
+            // WICHTIG: weight(1f) statt fillMaxSize() - sonst bekommt die Karte beim Layout die
+            // volle Bildschirmhöhe zugewiesen (ignoriert die Card darüber) und osmdroid zeichnet
+            // beim Pannen/Fling über seinen tatsächlich sichtbaren Bereich hinaus, wodurch die
+            // Karte optisch über die Bedienelemente rutscht.
+            Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
                 AndroidView(
                     factory = {
                         mapView.apply {
