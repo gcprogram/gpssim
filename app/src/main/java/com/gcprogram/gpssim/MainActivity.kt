@@ -9,8 +9,17 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
+import com.gcprogram.gpssim.gpx.GpxRepository
+import com.gcprogram.gpssim.ui.CacheListScreen
 import com.gcprogram.gpssim.ui.MapScreen
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
 
@@ -25,7 +34,23 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    MapScreen()
+                    val context = LocalContext.current
+                    // Zuletzt importierte GPX-Cacheliste beim Start wieder laden (siehe
+                    // GpxRepository - Datei liegt bereits im App-Verzeichnis, kein neuer Import
+                    // nötig). Einmalig und abseits des Main-Threads, da Datei-I/O beteiligt ist.
+                    LaunchedEffect(Unit) {
+                        withContext(Dispatchers.IO) { GpxRepository.loadPersisted(context) }
+                    }
+
+                    val navController = rememberNavController()
+                    NavHost(navController = navController, startDestination = "map") {
+                        composable("map") {
+                            MapScreen(onOpenCacheList = { navController.navigate("cachelist") })
+                        }
+                        composable("cachelist") {
+                            CacheListScreen(onBack = { navController.popBackStack() })
+                        }
+                    }
                 }
             }
         }

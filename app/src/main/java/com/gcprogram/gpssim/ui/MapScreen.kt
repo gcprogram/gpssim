@@ -163,7 +163,7 @@ private fun lastKnownRealLocation(context: Context): GeoPoint? {
 }
 
 @Composable
-fun MapScreen() {
+fun MapScreen(onOpenCacheList: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -208,6 +208,51 @@ fun MapScreen() {
         redrawTrack()
         MockLocationController.setTrack(waypoints.toList())
         statusText = "${waypoints.size} Wegpunkt(e) gesetzt"
+    }
+
+    // Zeigt die aus einer GPX importierten Caches auf der Karte: ohne Auswahl (siehe
+    // CacheListScreen) einen Marker pro Cache mit Cache-Typ-Icon an dessen Übersichts-
+    // koordinaten (Final falls vorhanden, sonst posted); mit Auswahl stattdessen ALLE
+    // Wegpunkte dieses einen Caches - der Cache selbst mit Typ-Icon, alle anderen (Final,
+    // Parkplatz, Etappen, Original Coordinates, ...) mit dem blauen Wegpunkt-Marker.
+    fun redrawGpxMarkers(caches: List<com.gcprogram.gpssim.geo.GeoCache>, selected: com.gcprogram.gpssim.geo.GeoCache?) {
+        mapView.overlays.removeAll { it is Marker && it.id == "gpx" }
+        val typeIcon = { type: String? ->
+            com.gcprogram.gpssim.geo.MapIconFactory.cacheTypeMarker(context, type)
+        }
+        val wpIcon = { com.gcprogram.gpssim.geo.MapIconFactory.waypointMarker(context) }
+
+        if (selected == null) {
+            for (cache in caches) {
+                val marker = Marker(mapView).apply {
+                    position = GeoPoint(cache.overviewLatitude, cache.overviewLongitude)
+                    title = "${cache.gccode} - ${cache.title}"
+                    id = "gpx"
+                    icon = typeIcon(cache.cacheType)
+                    setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+                }
+                mapView.overlays.add(marker)
+            }
+        } else {
+            val cacheMarker = Marker(mapView).apply {
+                position = GeoPoint(selected.postedLatitude, selected.postedLongitude)
+                title = "${selected.gccode} - ${selected.title}"
+                id = "gpx"
+                icon = typeIcon(selected.cacheType)
+                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+            }
+            mapView.overlays.add(cacheMarker)
+            for (wp in selected.waypoints) {
+                val marker = Marker(mapView).apply {
+                    position = GeoPoint(wp.latitude, wp.longitude)
+                    title = "${wp.type}: ${wp.title}"
+                    id = "gpx"
+                    icon = wpIcon()
+                }
+                mapView.overlays.add(marker)
+            }
+        }
+        mapView.invalidate()
     }
 
     // Long-Press / Tap auf der Karte setzt einen neuen Wegpunkt - kein Auto-Center hier
@@ -295,6 +340,16 @@ fun MapScreen() {
         }
     }
 
+    // Cache-/Wegpunkt-Marker aus dem GPX-Import neu zeichnen, sobald sich die Liste oder die
+    // Auswahl ändert (z.B. nach Import oder nach Auswahl eines Caches in CacheListScreen).
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        kotlinx.coroutines.flow.combine(
+            com.gcprogram.gpssim.gpx.GpxRepository.caches,
+            com.gcprogram.gpssim.gpx.GpxRepository.selectedCache
+        ) { caches, selected -> caches to selected }
+            .collectLatest { (caches, selected) -> redrawGpxMarkers(caches, selected) }
+    }
+
     // Startpunkt der Karte: echte GPS/Netzwerk-Position statt eines festen Orts.
     // Läuft einmalig nach dem ersten Aufbau der Karte (siehe lastKnownRealLocation()
     // für die Einschränkung solange die Simulation noch nicht aktiv ist).
@@ -372,6 +427,12 @@ fun MapScreen() {
                             statusText = "Track geleert"
                         }) {
                             Icon(Icons.Default.Clear, contentDescription = "Track leeren")
+                        }
+                        // Neue Seite: aus GPX importierte Caches durchsuchen/auswählen (siehe
+                        // CacheListScreen.kt) - Wegpunkte eines gewählten Caches erscheinen dann
+                        // auf dieser Karte (redrawGpxMarkers), unabhängig vom manuell eingegebenen Track.
+                        Button(onClick = onOpenCacheList) {
+                            Icon(androidx.compose.material.icons.filled.List, contentDescription = "Cache-Liste (GPX)")
                         }
                     }
                     Row(

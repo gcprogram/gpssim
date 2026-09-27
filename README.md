@@ -38,16 +38,32 @@ im GC-Freitextformat einfügen, Track auf der Karte antippen, Simulation starten
   Dateien-App auf dem Handy herunterladen). Die Datei wird ins App-Verzeichnis kopiert,
   danach schaltet der Online/Offline-Schalter daneben zwischen Mapnik-Online-Tiles und
   der lokalen Karte um (kein Netzwerkzugriff mehr im Offline-Modus).
+- Listen-Icon oben in der Karte öffnet die neue **Cache-Liste**: dort per Datei-Symbol
+  (oben rechts) eine Geocaching-GPX-Datei laden (Export aus der offiziellen App, c:geo,
+  oder eine Pocket Query/PQ-ZIP). Jeder erkannte Cache (Name `GCxxxxx`) erscheint mit
+  Cache-Typ-Icon, Titel und Anzahl zusätzlicher Wegpunkte in der Liste.
+  - Ohne Auswahl zeigt die Karte alle geladenen Caches als einen Marker pro Cache
+    (Final-Koordinaten falls in der GPX vorhanden, sonst die veröffentlichten Koordinaten),
+    jeweils mit ihrem Cache-Typ-Icon (gleiche SVGs wie in GCToolkit-Android).
+  - Tippt man einen Cache in der Liste an, springt man zurück zur Karte und sieht nur noch
+    dessen eigene Wegpunkte: der Cache selbst mit Typ-Icon, alle anderen (Final, Parkplatz,
+    Etappen, Original Coordinates, ...) als blauer "umgekehrter Tropfen"-Marker.
+  - Die zuletzt geladene GPX-Datei wird gemerkt und beim nächsten App-Start automatisch
+    wieder eingelesen (kein erneuter Import nötig).
 
 ## Offene Punkte / nächste Schritte
 
 - Wegpunkte lassen sich aktuell nur hinzufügen, nicht einzeln per Tap wieder entfernen
   oder verschieben - bei Bedarf ergänzen.
-- Icon ist ein Platzhalter (System-Icon), kein eigenes App-Icon.
 - Karte startet zentriert auf der letzten bekannten echten Position (Fallback: Berlin,
   falls keine Berechtigung/kein Fix vorliegt).
 - Offline-Kartenauswahl merkt sich nur eine Karte gleichzeitig (Datei wird beim nächsten
   Import überschrieben) - kein Verwaltungsscreen für mehrere Karten.
+- GPX-Import merkt sich ebenfalls nur eine geladene Datei (wird beim nächsten Import
+  überschrieben) - kein Verwaltungsscreen für mehrere GPX-Dateien.
+- Ein ausgewählter Cache aus der Cache-Liste befüllt noch nicht automatisch den
+  Simulations-Track (Play/Pause) - das Antippen der Wegpunkte auf der Karte oder das
+  manuelle Einfügen bleibt bislang der Weg, den Track selbst zu bestücken.
 
 ## Architektur
 
@@ -60,5 +76,18 @@ im GC-Freitextformat einfügen, Track auf der Karte antippen, Simulation starten
   `LocationManager`-Test-Provider auf `GPS_PROVIDER`
 - `offline/OfflineMapManager.kt` - importiert/verwaltet die lokale Mapsforge-.map-Datei
   (gestreamter Kopiervorgang von der SAF-Uri ins App-Verzeichnis)
+- `geo/CacheTypes.kt` / `geo/CacheIcons.kt` - Cache-Typ-Normalisierung und Icon-/Farbzuordnung,
+  1:1 aus GCToolkit-Android übernommen
+- `geo/GeoCache.kt` - Datenmodell für importierte Caches (`GeoCache`) und ihre zusätzlichen
+  Wegpunkte (`CacheWaypoint`)
+- `geo/MapIconFactory.kt` - rendert die cache_type-SVGs (assets/cache_icons, aus
+  GCToolkit-Android kopiert) via androidsvg als Kartenmarker, plus blauer Wegpunkt-Marker
+- `gpx/GpxImporter.kt` - streamender GPX/PQ-ZIP-Parser (XmlPullParser), erkennt Caches
+  (`GCxxxxx`) und ordnet zusätzliche Wegpunkte per `gsak:Parent` bzw. Ein-Cache-Fallback zu
+- `gpx/GpxRepository.kt` - prozessweiter Singleton für die importierte Cacheliste inkl.
+  Persistenz (gestreamter Kopiervorgang, analog OfflineMapManager) und Cache-Auswahl
+- `ui/CacheListScreen.kt` - neue Seite: GPX-Import-Button, Liste aller geladenen Caches
+  mit Icon/Titel, Auswahl navigiert zurück zur Karte
 - `ui/MapScreen.kt` - Compose-Screen mit osmdroid-`MapView` via `AndroidView`,
-  schaltet zwischen `MapTileProviderBasic` (online) und `MapsForgeTileProvider` (offline) um
+  schaltet zwischen `MapTileProviderBasic` (online) und `MapsForgeTileProvider` (offline) um,
+  zeichnet zusätzlich die GPX-Cache-/Wegpunkt-Marker (`redrawGpxMarkers`)

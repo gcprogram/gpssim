@@ -69,5 +69,11 @@ dependencies {
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 
+    // Navigation zwischen Kartenseite und neuer Cache-Liste
+    implementation("androidx.navigation:navigation-compose:2.8.0")
+
+    // Rendert die cache_type-SVGs (aus GCToolkit-Android übernommen) als Kartenmarker
+    implementation("com.caverock:androidsvg-aar:1.4")
+
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
