@@ -26,6 +26,9 @@ import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.DirectionsBike
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.DirectionsWalk
+// Alias nötig: "List" würde sonst mit kotlin.collections.List kollidieren (das Kotlin
+// automatisch in jede Datei importiert) und JEDE Verwendung von List<T> in dieser Datei zerschießen.
+import androidx.compose.material.icons.filled.List as CacheListIcon
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -432,7 +435,7 @@ fun MapScreen(onOpenCacheList: () -> Unit) {
                         // CacheListScreen.kt) - Wegpunkte eines gewählten Caches erscheinen dann
                         // auf dieser Karte (redrawGpxMarkers), unabhängig vom manuell eingegebenen Track.
                         Button(onClick = onOpenCacheList) {
-                            Icon(androidx.compose.material.icons.filled.List, contentDescription = "Cache-Liste (GPX)")
+                            Icon(Icons.Default.CacheListIcon, contentDescription = "Cache-Liste (GPX)")
                         }
                     }
                     Row(
