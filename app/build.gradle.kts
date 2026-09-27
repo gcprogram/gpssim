@@ -72,8 +72,12 @@ dependencies {
     // Navigation zwischen Kartenseite und neuer Cache-Liste
     implementation("androidx.navigation:navigation-compose:2.8.0")
 
-    // Rendert die cache_type-SVGs (aus GCToolkit-Android übernommen) als Kartenmarker
-    implementation("com.caverock:androidsvg-aar:1.4")
+    // Rendert die cache_type-SVGs (aus GCToolkit-Android übernommen) als Kartenmarker.
+    // WICHTIG: die "-aar"-Variante NICHT verwenden - osmdroid-mapsforge/mapsforge-map bringt
+    // bereits com.caverock:androidsvg transitiv mit; beide zusammen ergeben eine Duplicate-
+    // Class-Kollision (com.caverock.androidsvg.BuildConfig) beim Build. Gleiche Koordinate wie
+    // in GCToolkit-Android verwenden, dann löst Gradle nur eine Version auf.
+    implementation("com.caverock:androidsvg:1.4")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
