@@ -3,8 +3,9 @@ package com.gcprogram.gpssim.ui
 import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -46,6 +47,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.gcprogram.gpssim.geo.GeoCache
 import com.gcprogram.gpssim.geo.MapIconFactory
+import com.gcprogram.gpssim.geo.TrackPoint
+import com.gcprogram.gpssim.geo.TrackRepository
+import com.gcprogram.gpssim.geo.toTrackPoints
 import com.gcprogram.gpssim.gpx.GpxRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -120,6 +124,12 @@ fun CacheListScreen(onBack: () -> Unit) {
                     )
                 }
             } else {
+                Text(
+                    "Tippen: nur diesen Cache auf der Karte zeigen · Lang drücken: alle seine " +
+                        "Wegpunkte zur Simulations-Wegpunktliste hinzufügen",
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                    style = MaterialTheme.typography.bodySmall
+                )
                 LazyColumn(modifier = Modifier.fillMaxSize()) {
                     items(caches, key = { it.gccode }) { cache ->
                         CacheRow(
@@ -128,6 +138,11 @@ fun CacheListScreen(onBack: () -> Unit) {
                             onClick = {
                                 GpxRepository.selectCache(cache)
                                 onBack()
+                            },
+                            onLongClick = {
+                                val added = cache.toTrackPoints()
+                                TrackRepository.addAll(added)
+                                statusText = "${added.size} Wegpunkt(e) von ${cache.gccode} zur Simulationsliste hinzugefügt"
                             }
                         )
                     }
@@ -137,14 +152,15 @@ fun CacheListScreen(onBack: () -> Unit) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun CacheRow(cache: GeoCache, isSelected: Boolean, onClick: () -> Unit) {
+private fun CacheRow(cache: GeoCache, isSelected: Boolean, onClick: () -> Unit, onLongClick: () -> Unit) {
     val context = LocalContext.current
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 8.dp, vertical = 4.dp)
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(10.dp),

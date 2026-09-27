@@ -20,15 +20,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AddLocation
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.DirectionsBike
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.DirectionsWalk
-// Alias nötig: "List" würde sonst mit kotlin.collections.List kollidieren (das Kotlin
-// automatisch in jede Datei importiert) und JEDE Verwendung von List<T> in dieser Datei zerschießen.
-import androidx.compose.material.icons.filled.List as CacheListIcon
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -46,18 +45,20 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.core.graphics.drawable.toBitmap
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.gcprogram.gpssim.geo.CoordinateParser
@@ -166,13 +167,14 @@ private fun lastKnownRealLocation(context: Context): GeoPoint? {
 }
 
 @Composable
-fun MapScreen(onOpenCacheList: () -> Unit) {
+fun MapScreen(onOpenCacheList: () -> Unit, onOpenWaypointList: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    // Track als geordnete Wegpunktliste - jeder Tap auf die Karte und jede
-    // erfolgreich geparste Paste fügt hier einen Punkt an.
-    val waypoints = remember { mutableStateListOf<TrackPoint>() }
+    // Track als geordnete Wegpunktliste - jetzt ein geteilter Singleton (TrackRepository)
+    // statt lokalem State, damit CacheListScreen (Long-Press "alle Wegpunkte hinzufügen") und
+    // WaypointListScreen (einzeln entfernen) denselben Track sehen und ändern können.
+    val waypoints by com.gcprogram.gpssim.geo.TrackRepository.waypoints.collectAsState()
 
     var pasteText by remember { mutableStateOf("") }
     var selectedSpeedPreset by remember { mutableStateOf(SpeedPreset.WALK) }
@@ -192,13 +194,13 @@ fun MapScreen(onOpenCacheList: () -> Unit) {
         }
     }
 
-    fun redrawTrack() {
-        trackPolyline.setPoints(waypoints.map { GeoPoint(it.latitude, it.longitude) })
+    fun redrawTrack(points: List<TrackPoint>) {
+        trackPolyline.setPoints(points.map { GeoPoint(it.latitude, it.longitude) })
         mapView.overlays.removeAll { it is Marker && it.id == "waypoint" }
-        waypoints.forEachIndexed { index, wp ->
+        points.forEachIndexed { index, wp ->
             val marker = Marker(mapView).apply {
                 position = GeoPoint(wp.latitude, wp.longitude)
-                title = "Wegpunkt ${index + 1}"
+                title = wp.label ?: "Wegpunkt ${index + 1}"
                 id = "waypoint"
             }
             mapView.overlays.add(marker)
@@ -207,10 +209,18 @@ fun MapScreen(onOpenCacheList: () -> Unit) {
     }
 
     fun addWaypoint(point: TrackPoint) {
-        waypoints.add(point)
-        redrawTrack()
-        MockLocationController.setTrack(waypoints.toList())
-        statusText = "${waypoints.size} Wegpunkt(e) gesetzt"
+        com.gcprogram.gpssim.geo.TrackRepository.add(point)
+    }
+
+    // Track/Karte/Simulator neu abgleichen, sobald sich die geteilte Wegpunktliste ändert -
+    // egal ob durch Tap auf die Karte, Paste hier, Long-Press in der Cache-Liste oder Entfernen
+    // in der neuen WaypointListScreen.
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        com.gcprogram.gpssim.geo.TrackRepository.waypoints.collectLatest { pts ->
+            redrawTrack(pts)
+            MockLocationController.setTrack(pts)
+            statusText = "${pts.size} Wegpunkt(e) gesetzt"
+        }
     }
 
     // Zeigt die aus einer GPX importierten Caches auf der Karte: ohne Auswahl (siehe
@@ -324,7 +334,9 @@ fun MapScreen(onOpenCacheList: () -> Unit) {
     }
 
     // Simulierte Position beobachten und NUR den Marker bewegen - map.controller.setCenter()
-    // wird hier bewusst nicht aufgerufen, damit die Karte nicht springt
+    // wird hier bewusst nicht aufgerufen, damit die Karte nicht springt. Zusätzlich füllt jede
+    // neue simulierte Position das Koordinatenfeld (DMM-Format) - so zeigt es während einer
+    // laufenden Simulation immer die zuletzt simulierte Position statt eines langen Platzhaltertexts.
     androidx.compose.runtime.LaunchedEffect(Unit) {
         MockLocationController.currentPosition.collectLatest { pos ->
             if (pos != null) {
@@ -334,6 +346,7 @@ fun MapScreen(onOpenCacheList: () -> Unit) {
                     mapView.overlays.add(currentPositionMarker)
                 }
                 mapView.invalidate()
+                pasteText = CoordinateParser.format(pos.latitude, pos.longitude)
             }
         }
     }
@@ -355,11 +368,14 @@ fun MapScreen(onOpenCacheList: () -> Unit) {
 
     // Startpunkt der Karte: echte GPS/Netzwerk-Position statt eines festen Orts.
     // Läuft einmalig nach dem ersten Aufbau der Karte (siehe lastKnownRealLocation()
-    // für die Einschränkung solange die Simulation noch nicht aktiv ist).
+    // für die Einschränkung solange die Simulation noch nicht aktiv ist). Befüllt zusätzlich
+    // das Koordinatenfeld mit der echten Position im DMM-Format (überschrieben, sobald die
+    // Simulation läuft - siehe LaunchedEffect zu MockLocationController.currentPosition oben).
     LaunchedEffect(Unit) {
         lastKnownRealLocation(context)?.let { point ->
             mapView.controller.setCenter(point)
             mapView.invalidate()
+            pasteText = CoordinateParser.format(point.latitude, point.longitude)
         }
     }
 
@@ -402,40 +418,48 @@ fun MapScreen(onOpenCacheList: () -> Unit) {
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
             Card(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
                 Column(modifier = Modifier.padding(8.dp)) {
+                    // Kurzes Label statt langem Platzhaltertext - das Feld ist ohnehin ab Start mit
+                    // der echten GPS-Position (später: letzte simulierte Position) vorbelegt,
+                    // siehe die beiden LaunchedEffect-Blöcke weiter unten.
                     OutlinedTextField(
                         value = pasteText,
                         onValueChange = { pasteText = it },
-                        label = { Text("Koordinaten einfügen, z.B. N49° 12.345 E008° 40.123") },
+                        label = { Text("Koordinaten") },
                         modifier = Modifier.fillMaxWidth()
                     )
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
+                        // "+📍" statt langem Text "Als Wegpunkt hinzufügen" - AddLocation-Icon
+                        // vereint Plus-Symbol und Markernadel in einem.
                         Button(onClick = {
                             val parsed = CoordinateParser.parse(pasteText)
                             if (parsed != null) {
                                 addWaypoint(TrackPoint(parsed.latitude, parsed.longitude))
                                 mapView.controller.animateTo(GeoPoint(parsed.latitude, parsed.longitude))
-                                pasteText = ""
                             } else {
                                 statusText = "Koordinaten nicht erkannt - Format N dd° mm.mmm E ddd° mm.mmm erwartet"
                             }
                         }) {
-                            Text("Als Wegpunkt hinzufügen")
+                            Icon(Icons.Default.AddLocation, contentDescription = "Als Wegpunkt hinzufügen")
                         }
-                        Button(onClick = {
-                            waypoints.clear()
-                            redrawTrack()
-                            statusText = "Track geleert"
-                        }) {
-                            Icon(Icons.Default.Clear, contentDescription = "Track leeren")
+                        // X öffnet jetzt die neue Wegpunktliste (statt sofort alles zu löschen) -
+                        // dort lässt sich jeder Wegpunkt einzeln per X entfernen, siehe WaypointListScreen.kt.
+                        Button(onClick = onOpenWaypointList) {
+                            Icon(Icons.Default.Clear, contentDescription = "Wegpunktliste öffnen")
                         }
                         // Neue Seite: aus GPX importierte Caches durchsuchen/auswählen (siehe
-                        // CacheListScreen.kt) - Wegpunkte eines gewählten Caches erscheinen dann
-                        // auf dieser Karte (redrawGpxMarkers), unabhängig vom manuell eingegebenen Track.
+                        // CacheListScreen.kt) - "+" plus Adventure-Lab-Cache-Icon statt eines
+                        // (auf manchen Geräten leer gerenderten) reinen List-Icons.
                         Button(onClick = onOpenCacheList) {
-                            Icon(Icons.Default.CacheListIcon, contentDescription = "Cache-Liste (GPX)")
+                            Text("+")
+                            Spacer(Modifier.width(4.dp))
+                            val labIcon = remember { com.gcprogram.gpssim.geo.MapIconFactory.cacheTypeMarker(context, "Lab") }
+                            androidx.compose.foundation.Image(
+                                bitmap = labIcon.toBitmap().asImageBitmap(),
+                                contentDescription = "Cache-Liste (GPX)"
+                            )
                         }
                     }
                     Row(
@@ -512,10 +536,11 @@ fun MapScreen(onOpenCacheList: () -> Unit) {
             }
 
             // WICHTIG: weight(1f) statt fillMaxSize() - sonst bekommt die Karte beim Layout die
-            // volle Bildschirmhöhe zugewiesen (ignoriert die Card darüber) und osmdroid zeichnet
-            // beim Pannen/Fling über seinen tatsächlich sichtbaren Bereich hinaus, wodurch die
-            // Karte optisch über die Bedienelemente rutscht.
-            Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
+            // volle Bildschirmhöhe zugewiesen (ignoriert die Card darüber). Zusätzlich clipToBounds():
+            // osmdroid zeichnet über seinen zugewiesenen Compose-Bereich hinaus (z.B. direkt nach
+            // zoomToBoundingBox() beim Umschalten auf eine Offline-Karte, oder beim Pannen/Fling) -
+            // clipToBounds() kappt das hart an der Box-Grenze, egal was die native View selbst glaubt.
+            Box(modifier = Modifier.fillMaxWidth().weight(1f).clipToBounds()) {
                 AndroidView(
                     factory = {
                         mapView.apply {

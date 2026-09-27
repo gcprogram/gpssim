@@ -12,8 +12,8 @@ android {
         applicationId = "com.gcprogram.gpssim"
         minSdk = 29
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
     }
 
     buildTypes {
@@ -68,9 +68,6 @@ dependencies {
     implementation("org.mapsforge:mapsforge-core:0.18.0")
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
-
-    // Navigation zwischen Kartenseite und neuer Cache-Liste
-    implementation("androidx.navigation:navigation-compose:2.8.0")
 
     // Rendert die cache_type-SVGs (aus GCToolkit-Android übernommen) als Kartenmarker.
     // WICHTIG: die "-aar"-Variante NICHT verwenden - osmdroid-mapsforge/mapsforge-map bringt

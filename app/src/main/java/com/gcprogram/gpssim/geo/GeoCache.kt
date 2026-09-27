@@ -33,3 +33,17 @@ data class GeoCache(
     val overviewLatitude: Double get() = finalWaypoint?.latitude ?: postedLatitude
     val overviewLongitude: Double get() = finalWaypoint?.longitude ?: postedLongitude
 }
+
+/**
+ * Alle Wegpunkte dieses Caches (der Cache selbst plus alle zusätzlichen) als TrackPoints für
+ * die Simulations-Wegpunktliste - jeweils mit Kurzbeschreibung als Label (siehe
+ * CacheListScreen: Long-Press auf einen Cache fügt das Ergebnis komplett hinzu).
+ */
+fun GeoCache.toTrackPoints(): List<TrackPoint> {
+    val points = ArrayList<TrackPoint>(waypoints.size + 1)
+    points.add(TrackPoint(postedLatitude, postedLongitude, "$gccode - $title"))
+    for (wp in waypoints) {
+        points.add(TrackPoint(wp.latitude, wp.longitude, "$gccode ${wp.type}: ${wp.title}"))
+    }
+    return points
+}

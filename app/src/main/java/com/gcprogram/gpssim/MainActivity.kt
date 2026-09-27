@@ -6,20 +6,25 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.navigation.compose.NavHost
-import androidx.navigation.compose.composable
-import androidx.navigation.compose.rememberNavController
 import com.gcprogram.gpssim.gpx.GpxRepository
 import com.gcprogram.gpssim.ui.CacheListScreen
 import com.gcprogram.gpssim.ui.MapScreen
+import com.gcprogram.gpssim.ui.WaypointListScreen
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+
+private enum class Overlay { CACHE_LIST, WAYPOINT_LIST }
 
 class MainActivity : ComponentActivity() {
 
@@ -42,13 +47,22 @@ class MainActivity : ComponentActivity() {
                         withContext(Dispatchers.IO) { GpxRepository.loadPersisted(context) }
                     }
 
-                    val navController = rememberNavController()
-                    NavHost(navController = navController, startDestination = "map") {
-                        composable("map") {
-                            MapScreen(onOpenCacheList = { navController.navigate("cachelist") })
-                        }
-                        composable("cachelist") {
-                            CacheListScreen(onBack = { navController.popBackStack() })
+                    // Bewusst KEIN NavHost: composable()-Routen werden beim Verlassen komplett
+                    // verworfen und beim Zurückkehren neu aufgebaut - das hätte MapScreens
+                    // gesamten Zustand (MapView, Offline-Kartenmodus, Track) bei jedem Ausflug in
+                    // die Cache-/Wegpunktliste zurückgesetzt (Kartensprung, Overlay-Ruckler).
+                    // Stattdessen bleibt MapScreen dauerhaft komponiert, die anderen Seiten liegen
+                    // als Overlay obenauf.
+                    var overlay by remember { mutableStateOf<Overlay?>(null) }
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        MapScreen(
+                            onOpenCacheList = { overlay = Overlay.CACHE_LIST },
+                            onOpenWaypointList = { overlay = Overlay.WAYPOINT_LIST }
+                        )
+                        when (overlay) {
+                            Overlay.CACHE_LIST -> CacheListScreen(onBack = { overlay = null })
+                            Overlay.WAYPOINT_LIST -> WaypointListScreen(onBack = { overlay = null })
+                            null -> {}
                         }
                     }
                 }
