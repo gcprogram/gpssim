@@ -111,10 +111,20 @@ private fun readMapBounds(mapFile: File): BoundingBox? {
 /** Schaltet die Karte auf eine lokale Mapsforge-.map-Datei um (kein Netzwerkzugriff mehr). */
 private fun switchToOfflineMap(mapView: MapView, mapFile: File): Boolean {
     return try {
-        val tileSource = MapsForgeTileSource.createFromFiles(arrayOf(mapFile), null, null)
+        // Eigener Cache-Name pro Datei (statt null) - osmdroid legt Kacheln nach Tile-Source-
+        // Namen ab; ohne eindeutigen Namen würden zwei verschiedene Offline-Karten denselben
+        // Cache-Bereich teilen und ggf. die (leeren/falschen) Kacheln der vorherigen Karte
+        // ausliefern, bis dieser Bereich manuell neu geladen wird.
+        val cacheName = "mapsforge-" + mapFile.name
+        val tileSource = MapsForgeTileSource.createFromFiles(arrayOf(mapFile), null, cacheName)
         val provider = MapsForgeTileProvider(SimpleRegisterReceiver(mapView.context), tileSource, null)
         mapView.tileProvider.detach()
-        mapView.setTileProvider(provider)
+        mapView.tileProvider = provider
+        // WICHTIG: ohne diesen Aufruf bleibt die Karte auf der vorherigen Tile-Source projiziert -
+        // sie gilt als "aktiv" (Umschalt-Status korrekt), zeichnet aber keine Kacheln, weil
+        // MapView intern noch mit der alten Source arbeitet. Siehe GCToolkit-Android, das diesen
+        // Aufruf ebenfalls direkt nach setTileProvider() macht.
+        mapView.setTileSource(tileSource)
         mapView.setUseDataConnection(false)
         // Auf den Abdeckungsbereich der Karte zentrieren - sonst bleibt ggf. der Default-
         // Kartenausschnitt (Berlin) stehen, obwohl die Kartendatei einen ganz anderen
@@ -130,7 +140,7 @@ private fun switchToOfflineMap(mapView: MapView, mapFile: File): Boolean {
 /** Schaltet zurück auf Online-OSM-Tiles (Mapnik). */
 private fun switchToOnlineMap(mapView: MapView) {
     mapView.tileProvider.detach()
-    mapView.setTileProvider(MapTileProviderBasic(mapView.context))
+    mapView.tileProvider = MapTileProviderBasic(mapView.context)
     mapView.setTileSource(TileSourceFactory.MAPNIK)
     mapView.setUseDataConnection(true)
     mapView.invalidate()
@@ -446,8 +456,11 @@ fun MapScreen(onOpenCacheList: () -> Unit, onOpenWaypointList: () -> Unit) {
                         }
                         // X öffnet jetzt die neue Wegpunktliste (statt sofort alles zu löschen) -
                         // dort lässt sich jeder Wegpunkt einzeln per X entfernen, siehe WaypointListScreen.kt.
+                        // Zusätzlich zur Anzahl als Text, damit der Button erkennbar zu einer Liste
+                        // führt und nicht wie ein reiner "alles löschen"-Button wirkt.
                         Button(onClick = onOpenWaypointList) {
                             Icon(Icons.Default.Clear, contentDescription = "Wegpunktliste öffnen")
+                            Text(" ${waypoints.size}")
                         }
                         // Neue Seite: aus GPX importierte Caches durchsuchen/auswählen (siehe
                         // CacheListScreen.kt) - "+" plus Adventure-Lab-Cache-Icon statt eines
