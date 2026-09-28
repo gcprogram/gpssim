@@ -9,5 +9,9 @@ data class SimulatedPosition(
     val latitude: Double,
     val longitude: Double,
     val bearing: Float,
-    val speedMps: Float
+    val speedMps: Float,
+    /** Index des Wegpunkts, von dem aus das aktuelle Segment losläuft (0-basiert) - für die
+     * Karte, um den bereits gefahrenen (grauen) vom noch bevorstehenden (blauen) Streckenteil
+     * zu unterscheiden, siehe MapScreen.redrawTrack(). */
+    val segmentIndex: Int = 0
 )

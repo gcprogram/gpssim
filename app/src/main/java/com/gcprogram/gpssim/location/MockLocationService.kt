@@ -160,7 +160,7 @@ class MockLocationService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("GPS Simulator aktiv")
             .setContentText("Simulierte Position wird als GPS-Standort ausgegeben")
-            .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+            .setSmallIcon(com.gcprogram.gpssim.R.drawable.ic_stat_gps_sim)
             .setOngoing(true)
             .build()
     }

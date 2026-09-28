@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Eigenes Notification-Icon statt android.R.drawable.ic_menu_mylocation (generisches
+     System-Icon) - das war vermutlich das "alte Icon", das im Statusleisten-Bereich immer
+     zu sehen war, solange die Simulation lief, unabhängig vom Launcher-Icon. Muss reine
+     Silhouette sein (weiß auf transparent) - Android tönt Notification-Icons automatisch
+     einfarbig ein und ignoriert eigene Füllfarben, ein farbiges Icon würde als Klecks
+     erscheinen. Einfache Zielkreuz-Form (Ort/Standort), generisch und ohne Markenbezug. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="#FFFFFF">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M12,2 C12.55,2 13,2.45 13,3 L13,4.06 C16.61,4.51 19.49,7.39 19.94,11 L21,11 C21.55,11 22,11.45 22,12 C22,12.55 21.55,13 21,13 L19.94,13 C19.49,16.61 16.61,19.49 13,19.94 L13,21 C13,21.55 12.55,22 12,22 C11.45,22 11,21.55 11,21 L11,19.94 C7.39,19.49 4.51,16.61 4.06,13 L3,13 C2.45,13 2,12.55 2,12 C2,11.45 2.45,11 3,11 L4.06,11 C4.51,7.39 7.39,4.51 11,4.06 L11,3 C11,2.45 11.45,2 12,2 Z M12,6 C8.69,6 6,8.69 6,12 C6,15.31 8.69,18 12,18 C15.31,18 18,15.31 18,12 C18,8.69 15.31,6 12,6 Z M12,9.5 C13.38,9.5 14.5,10.62 14.5,12 C14.5,13.38 13.38,14.5 12,14.5 C10.62,14.5 9.5,13.38 9.5,12 C9.5,10.62 10.62,9.5 12,9.5 Z" />
+</vector>

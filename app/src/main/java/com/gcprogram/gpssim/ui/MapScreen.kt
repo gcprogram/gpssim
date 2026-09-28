@@ -23,7 +23,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddLocation
-import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.DirectionsBike
 import androidx.compose.material.icons.filled.DirectionsCar
@@ -32,6 +31,8 @@ import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.RocketLaunch
+import androidx.compose.material.icons.filled.Route
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.FilledIconToggleButton
@@ -66,6 +67,7 @@ import com.gcprogram.gpssim.geo.SpeedPreset
 import com.gcprogram.gpssim.geo.TrackPoint
 import com.gcprogram.gpssim.location.MockLocationController
 import com.gcprogram.gpssim.location.MockLocationService
+import com.gcprogram.gpssim.location.startSimulation
 import com.gcprogram.gpssim.offline.OfflineMapManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
@@ -84,6 +86,7 @@ import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.MapEventsOverlay
 import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polyline
+import org.osmdroid.views.overlay.ScaleBarOverlay
 import java.io.File
 
 /**
@@ -126,10 +129,17 @@ private fun switchToOfflineMap(mapView: MapView, mapFile: File): Boolean {
         // Aufruf ebenfalls direkt nach setTileProvider() macht.
         mapView.setTileSource(tileSource)
         mapView.setUseDataConnection(false)
-        // Auf den Abdeckungsbereich der Karte zentrieren - sonst bleibt ggf. der Default-
-        // Kartenausschnitt (Berlin) stehen, obwohl die Kartendatei einen ganz anderen
-        // Bereich abdeckt und dort schlicht nichts anzuzeigen ist.
-        readMapBounds(mapFile)?.let { bounds -> mapView.zoomToBoundingBox(bounds, false) }
+        // Auf die aktuelle (echte) GPS-Position zentrieren statt auf die Mitte der gesamten
+        // Kartendatei - wer z.B. eine Landkarte für ein späteres Vorhaben lädt, will die Ansicht
+        // dort haben, wo er gerade physisch steht, nicht in der geografischen Mitte der Datei.
+        // Nur falls kein GPS-Fix vorliegt (z.B. Berechtigung fehlt), auf den Abdeckungsbereich
+        // der Karte ausweichen - besser als ein Kartenausschnitt ganz ohne geladene Kacheln.
+        val realFix = lastKnownRealLocation(mapView.context)
+        if (realFix != null) {
+            mapView.controller.setCenter(realFix)
+        } else {
+            readMapBounds(mapFile)?.let { bounds -> mapView.zoomToBoundingBox(bounds, false) }
+        }
         mapView.invalidate()
         true
     } catch (e: Exception) {
@@ -187,25 +197,73 @@ fun MapScreen(onOpenCacheList: () -> Unit, onOpenWaypointList: () -> Unit) {
     val waypoints by com.gcprogram.gpssim.geo.TrackRepository.waypoints.collectAsState()
 
     var pasteText by remember { mutableStateOf("") }
-    var selectedSpeedPreset by remember { mutableStateOf(SpeedPreset.WALK) }
-    var jitterEnabled by remember { mutableStateOf(false) }
+    // Geteilter Zustand statt lokalem State (MockLocationController) - so wirkt ein Tempo-Wechsel
+    // auch sofort auf eine laufende Simulation, und Play von der Wegpunktliste aus (siehe
+    // startSimulation()) verwendet dieselbe zuletzt gewählte Geschwindigkeit.
+    val selectedSpeedPreset by MockLocationController.speedPreset.collectAsState()
+    val jitterEnabled by MockLocationController.jitterEnabled.collectAsState()
     var isRunning by remember { mutableStateOf(false) }
+    // Drei Zustände statt nur an/aus: "aus" (serviceActive=false), "pausiert" (serviceActive=true,
+    // isRunning=false - Mock-Provider bleibt aktiv, Track steht) und "läuft" (beide true). Der
+    // Play/Pause-FAB wechselt nur zwischen pausiert/läuft; ein zusätzlicher Stop-FAB (nur sichtbar,
+    // wenn serviceActive) beendet den Mock-Provider komplett und kehrt zu "aus" zurück. Geteilter
+    // Zustand (MockLocationController), damit ein Start über den Play-Button der Wegpunktliste
+    // hier ebenfalls korrekt ankommt.
+    val serviceActive by MockLocationController.serviceActive.collectAsState()
     var statusText by remember { mutableStateOf("Kein Track gesetzt") }
     var isOfflineMode by remember { mutableStateOf(false) }
     var offlineMapName by remember { mutableStateOf(OfflineMapManager.currentMapDisplayName(context)) }
+    // Letzter bekannter ECHTER (unsimulierter) GPS-Fix - für den "Auf Position zentrieren"-FAB.
+    // Wird NICHT während einer laufenden Simulation neu abgefragt, weil GPS_PROVIDER dann
+    // systemweit die simulierte Position liefert (siehe lastKnownRealLocation()).
+    var lastRealFix by remember { mutableStateOf<GeoPoint?>(null) }
 
     val mapView = remember { MapView(context) }
 
-    // Marker/Polyline-Referenzen, damit wir sie gezielt updaten statt die Karte neu zu zentrieren
-    val trackPolyline = remember { Polyline() }
+    // Zwei Linien statt einer: der bereits "abgefahrene" Teil des Tracks wird grau dargestellt,
+    // der noch bevorstehende bleibt blau - so sieht man auf einen Blick, wie weit die Simulation
+    // schon ist. Ohne laufende Simulation ist die gesamte Strecke "future" (blau).
+    val trackPolylinePast = remember {
+        Polyline().apply {
+            outlinePaint.color = Color.GRAY
+            outlinePaint.strokeWidth = 8f
+        }
+    }
+    val trackPolylineFuture = remember {
+        Polyline().apply {
+            outlinePaint.color = Color.BLUE
+            outlinePaint.strokeWidth = 8f
+        }
+    }
     val currentPositionMarker = remember {
         Marker(mapView).apply {
             title = "Simulierte Position"
         }
     }
 
+    // Teilt die Wegpunktliste an der aktuellen simulierten Position (SimulatedPosition.segmentIndex,
+    // siehe TrackSimulator) in einen gefahrenen (grau) und einen bevorstehenden (blau) Abschnitt.
+    // Ohne aktive Position (Simulation nie gestartet oder gestoppt/zurückgesetzt) ist alles blau.
+    fun updateTrackSplit(points: List<TrackPoint>, pos: com.gcprogram.gpssim.geo.SimulatedPosition?) {
+        if (pos == null || points.size < 2) {
+            trackPolylinePast.setPoints(emptyList())
+            trackPolylineFuture.setPoints(points.map { GeoPoint(it.latitude, it.longitude) })
+        } else {
+            val segIdx = pos.segmentIndex.coerceIn(0, points.size - 1)
+            val currentGeoPoint = GeoPoint(pos.latitude, pos.longitude)
+            val pastPts = ArrayList<GeoPoint>(segIdx + 2)
+            for (i in 0..segIdx) pastPts.add(GeoPoint(points[i].latitude, points[i].longitude))
+            pastPts.add(currentGeoPoint)
+            val futurePts = ArrayList<GeoPoint>(points.size - segIdx)
+            futurePts.add(currentGeoPoint)
+            for (i in (segIdx + 1) until points.size) futurePts.add(GeoPoint(points[i].latitude, points[i].longitude))
+            trackPolylinePast.setPoints(pastPts)
+            trackPolylineFuture.setPoints(futurePts)
+        }
+    }
+
     fun redrawTrack(points: List<TrackPoint>) {
-        trackPolyline.setPoints(points.map { GeoPoint(it.latitude, it.longitude) })
+        updateTrackSplit(points, MockLocationController.currentPosition.value)
         mapView.overlays.removeAll { it is Marker && it.id == "waypoint" }
         points.forEachIndexed { index, wp ->
             val marker = Marker(mapView).apply {
@@ -355,8 +413,13 @@ fun MapScreen(onOpenCacheList: () -> Unit, onOpenWaypointList: () -> Unit) {
                 if (!mapView.overlays.contains(currentPositionMarker)) {
                     mapView.overlays.add(currentPositionMarker)
                 }
+                updateTrackSplit(waypoints, pos)
                 mapView.invalidate()
                 pasteText = CoordinateParser.format(pos.latitude, pos.longitude)
+            } else {
+                // Zurückgesetzt (z.B. neuer Track) - komplette Strecke wieder blau
+                updateTrackSplit(waypoints, null)
+                mapView.invalidate()
             }
         }
     }
@@ -383,6 +446,7 @@ fun MapScreen(onOpenCacheList: () -> Unit, onOpenWaypointList: () -> Unit) {
     // Simulation läuft - siehe LaunchedEffect zu MockLocationController.currentPosition oben).
     LaunchedEffect(Unit) {
         lastKnownRealLocation(context)?.let { point ->
+            lastRealFix = point
             mapView.controller.setCenter(point)
             mapView.invalidate()
             pasteText = CoordinateParser.format(point.latitude, point.longitude)
@@ -393,27 +457,51 @@ fun MapScreen(onOpenCacheList: () -> Unit, onOpenWaypointList: () -> Unit) {
         floatingActionButton = {
             Column(horizontalAlignment = Alignment.End) {
                 FloatingActionButton(onClick = {
-                    // Expliziter Center-Button - die einzige Stelle, an der wir die Karte bewegen
-                    mapView.controller.animateTo(currentPositionMarker.position)
+                    // Zentriert auf die ECHTE, unsimulierte GPS-Position (nicht auf den
+                    // Track-Marker, der ohne laufende Simulation auf N0/E0 stünde). Solange die
+                    // Simulation nicht läuft, wird dafür ein frischer Fix abgefragt; während sie
+                    // läuft, liefert GPS_PROVIDER systemweit nur noch die simulierte Position
+                    // (siehe lastKnownRealLocation()), daher dann der zuletzt bekannte echte Fix.
+                    val target = if (!isRunning) {
+                        lastKnownRealLocation(context)?.also { lastRealFix = it } ?: lastRealFix
+                    } else {
+                        lastRealFix
+                    }
+                    target?.let { mapView.controller.animateTo(it) }
+                        ?: run { statusText = "Noch keine echte GPS-Position bekannt" }
                 }) {
                     Icon(Icons.Default.MyLocation, contentDescription = "Auf Position zentrieren")
                 }
                 Spacer(Modifier.height(4.dp))
-                FloatingActionButton(onClick = {
-                    if (isRunning) {
+                // Stop nur sichtbar, solange der Mock-Provider überhaupt aktiv ist (läuft oder
+                // pausiert) - beendet ihn komplett, GPS_PROVIDER liefert danach wieder die echte
+                // Position. Play/Pause allein tut das NICHT mehr (siehe unten) - Pause hält nur
+                // den Track an, der Mock-Provider bleibt auf der letzten Position stehen.
+                if (serviceActive) {
+                    FloatingActionButton(onClick = {
                         MockLocationController.stop()
                         MockLocationService.stop(context)
+                        MockLocationController.markServiceActive(false)
+                    }) {
+                        Icon(Icons.Default.Stop, contentDescription = "Simulation beenden")
+                    }
+                    Spacer(Modifier.height(4.dp))
+                }
+                FloatingActionButton(onClick = {
+                    if (isRunning) {
+                        // Pause: nur den Track anhalten, Mock-Provider/Service bleiben aktiv -
+                        // GPS liefert weiterhin die (stehende) simulierte Position.
+                        MockLocationController.stop()
+                    } else if (serviceActive) {
+                        // Fortsetzen ab der pausierten Stelle - KEIN erneutes setTrack(), das
+                        // würde den Fortschritt auf den Start zurücksetzen.
+                        MockLocationController.start()
                     } else {
-                        if (waypoints.size < 2) {
+                        // Geteilte Start-Logik mit dem Play-Button auf der Wegpunktliste, siehe
+                        // SimulationActions.kt - Geschwindigkeit/Jitter sind bereits über
+                        // MockLocationController synchron, hier wird nur noch der Track übernommen.
+                        if (!startSimulation(context)) {
                             statusText = "Mindestens 2 Wegpunkte nötig (Karte antippen oder Koordinaten einfügen)"
-                        } else {
-                            // Reihenfolge wichtig: Preset vor Track setzen, damit der Rocket-Modus
-                            // den Sprung zum Endanflug schon beim initialen setTrack() berechnet
-                            MockLocationController.setSpeedPreset(selectedSpeedPreset)
-                            MockLocationController.setTrack(waypoints.toList())
-                            MockLocationController.setJitterEnabled(jitterEnabled)
-                            MockLocationService.start(context)
-                            MockLocationController.start()
                         }
                     }
                 }) {
@@ -454,12 +542,10 @@ fun MapScreen(onOpenCacheList: () -> Unit, onOpenWaypointList: () -> Unit) {
                         }) {
                             Icon(Icons.Default.AddLocation, contentDescription = "Als Wegpunkt hinzufügen")
                         }
-                        // X öffnet jetzt die neue Wegpunktliste (statt sofort alles zu löschen) -
-                        // dort lässt sich jeder Wegpunkt einzeln per X entfernen, siehe WaypointListScreen.kt.
-                        // Zusätzlich zur Anzahl als Text, damit der Button erkennbar zu einer Liste
-                        // führt und nicht wie ein reiner "alles löschen"-Button wirkt.
+                        // Öffnet die Wegpunktliste - Route-Icon statt des früheren "X" (das wirkte
+                        // wie ein reiner Löschen-Button und war nicht als Listen-Einstieg erkennbar).
                         Button(onClick = onOpenWaypointList) {
-                            Icon(Icons.Default.Clear, contentDescription = "Wegpunktliste öffnen")
+                            Icon(Icons.Default.Route, contentDescription = "Wegpunktliste öffnen")
                             Text(" ${waypoints.size}")
                         }
                         // Neue Seite: aus GPX importierte Caches durchsuchen/auswählen (siehe
@@ -481,33 +567,33 @@ fun MapScreen(onOpenCacheList: () -> Unit, onOpenWaypointList: () -> Unit) {
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         // Geschwindigkeits-Presets statt Zahleneingabe: Fußgänger/Fahrrad/Auto/Rakete
-                        // (Rakete = Sonderlogik in TrackSimulator, siehe SpeedPreset.kt)
+                        // (Rakete = Sonderlogik in TrackSimulator, siehe SpeedPreset.kt). Wirkt jetzt
+                        // über MockLocationController.setSpeedPreset() SOFORT, auch während eine
+                        // Simulation bereits läuft - TrackSimulator liest die Geschwindigkeit bei
+                        // jedem 1-Sekunden-Tick neu, ein Wechsel bremst/beschleunigt also live.
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             FilledIconToggleButton(
                                 checked = selectedSpeedPreset == SpeedPreset.WALK,
-                                onCheckedChange = { if (it) selectedSpeedPreset = SpeedPreset.WALK }
+                                onCheckedChange = { if (it) MockLocationController.setSpeedPreset(SpeedPreset.WALK) }
                             ) { Icon(Icons.Default.DirectionsWalk, contentDescription = SpeedPreset.WALK.label) }
                             FilledIconToggleButton(
                                 checked = selectedSpeedPreset == SpeedPreset.BIKE,
-                                onCheckedChange = { if (it) selectedSpeedPreset = SpeedPreset.BIKE }
+                                onCheckedChange = { if (it) MockLocationController.setSpeedPreset(SpeedPreset.BIKE) }
                             ) { Icon(Icons.Default.DirectionsBike, contentDescription = SpeedPreset.BIKE.label) }
                             FilledIconToggleButton(
                                 checked = selectedSpeedPreset == SpeedPreset.CAR,
-                                onCheckedChange = { if (it) selectedSpeedPreset = SpeedPreset.CAR }
+                                onCheckedChange = { if (it) MockLocationController.setSpeedPreset(SpeedPreset.CAR) }
                             ) { Icon(Icons.Default.DirectionsCar, contentDescription = SpeedPreset.CAR.label) }
                             FilledIconToggleButton(
                                 checked = selectedSpeedPreset == SpeedPreset.ROCKET,
-                                onCheckedChange = { if (it) selectedSpeedPreset = SpeedPreset.ROCKET }
+                                onCheckedChange = { if (it) MockLocationController.setSpeedPreset(SpeedPreset.ROCKET) }
                             ) { Icon(Icons.Default.RocketLaunch, contentDescription = SpeedPreset.ROCKET.label) }
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text("Jitter ±5m", style = MaterialTheme.typography.bodySmall)
                             Switch(
                                 checked = jitterEnabled,
-                                onCheckedChange = { checked ->
-                                    jitterEnabled = checked
-                                    MockLocationController.setJitterEnabled(checked)
-                                }
+                                onCheckedChange = { checked -> MockLocationController.setJitterEnabled(checked) }
                             )
                         }
                     }
@@ -559,10 +645,24 @@ fun MapScreen(onOpenCacheList: () -> Unit, onOpenWaypointList: () -> Unit) {
                         mapView.apply {
                             setTileSource(TileSourceFactory.MAPNIK)
                             setMultiTouchControls(true)
+                            // Eingebaute Zoom-Buttons (+/-) unten rechts, zusätzlich zur
+                            // Pinch-to-Zoom-Geste - ALWAYS statt des Default-"nur kurz nach
+                            // Interaktion", damit sie dauerhaft sichtbar/antippbar sind.
+                            zoomController.setVisibility(
+                                org.osmdroid.views.CustomZoomButtonsController.Visibility.ALWAYS
+                            )
                             controller.setZoom(16.0)
                             controller.setCenter(GeoPoint(52.5200, 13.4050)) // Fallback-Default, bis lastKnownRealLocation() (falls verfügbar) übernimmt
                             overlays.add(mapEventsOverlay)
-                            overlays.add(trackPolyline)
+                            overlays.add(trackPolylineFuture)
+                            overlays.add(trackPolylinePast)
+                            // Maßstabsbalken oben links
+                            overlays.add(
+                                ScaleBarOverlay(this).apply {
+                                    setCentred(true)
+                                    setScaleBarOffset(20, 20)
+                                }
+                            )
                         }
                     },
                     modifier = Modifier.fillMaxSize()

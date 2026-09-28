@@ -169,7 +169,8 @@ class TrackSimulator(private val scope: CoroutineScope) {
             latitude = point.latitude,
             longitude = point.longitude,
             bearing = bearing,
-            speedMps = if (_isRunning.value) speedMps.toFloat() else 0f
+            speedMps = if (_isRunning.value) speedMps.toFloat() else 0f,
+            segmentIndex = segmentIndex
         )
     }
 }
