@@ -5,6 +5,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.location.Location
+import android.location.LocationListener
 import android.location.LocationManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -235,9 +237,22 @@ fun MapScreen(onOpenCacheList: () -> Unit, onOpenWaypointList: () -> Unit) {
             outlinePaint.strokeWidth = 8f
         }
     }
+    // Simulierte Position: kleiner Roboter/Androide (siehe MapIconFactory.robotMarker) -
+    // unterscheidet sie auf einen Blick von der echten, unsimulierten Position (Männchen-Icon).
     val currentPositionMarker = remember {
         Marker(mapView).apply {
             title = "Simulierte Position"
+            icon = com.gcprogram.gpssim.geo.MapIconFactory.robotMarker(context)
+            setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+        }
+    }
+    // Echte (unsimulierte) GPS-Position: kleines Männchen-Icon, live nachgeführt über einen
+    // eigenen LocationListener weiter unten (nicht nur der einmalige Fix beim App-Start).
+    val realPositionMarker = remember {
+        Marker(mapView).apply {
+            title = "Echte Position"
+            icon = com.gcprogram.gpssim.geo.MapIconFactory.personMarker(context)
+            setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
         }
     }
 
@@ -399,6 +414,53 @@ fun MapScreen(onOpenCacheList: () -> Unit, onOpenWaypointList: () -> Unit) {
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    // Live-Tracking der ECHTEN GPS-Position fürs Männchen-Icon (nicht nur der einmalige Fix
+    // beim App-Start) - läuft die ganze Zeit über NETWORK_PROVIDER (von unserem eigenen
+    // Mock-Test-Provider nicht betroffen) und zusätzlich über GPS_PROVIDER, aber NUR solange
+    // keine Simulation aktiv ist - während einer laufenden Simulation liefert GPS_PROVIDER
+    // systemweit die simulierte statt der echten Position (siehe MockLocationService).
+    DisposableEffect(context) {
+        val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+        val listener = object : LocationListener {
+            override fun onLocationChanged(location: Location) {
+                if (location.provider == LocationManager.GPS_PROVIDER &&
+                    MockLocationController.serviceActive.value
+                ) {
+                    return // während der Simulation ist das die gefälschte, nicht die echte Position
+                }
+                val point = GeoPoint(location.latitude, location.longitude)
+                lastRealFix = point
+                realPositionMarker.position = point
+                if (!mapView.overlays.contains(realPositionMarker)) {
+                    mapView.overlays.add(realPositionMarker)
+                }
+                mapView.invalidate()
+            }
+        }
+        val hasPermission = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED
+        if (hasPermission && locationManager != null) {
+            try {
+                for (provider in listOf(LocationManager.NETWORK_PROVIDER, LocationManager.GPS_PROVIDER)) {
+                    if (locationManager.isProviderEnabled(provider)) {
+                        locationManager.requestLocationUpdates(provider, 3000L, 5f, listener)
+                    }
+                }
+            } catch (e: SecurityException) {
+                // Berechtigung evtl. noch nicht final erteilt - bleibt beim einmaligen Startfix
+            }
+        }
+        onDispose {
+            try {
+                locationManager?.removeUpdates(listener)
+            } catch (e: Exception) {
+                // nichts zu tun - Listener war ggf. nie erfolgreich registriert
+            }
+        }
     }
 
     // Simulierte Position beobachten und NUR den Marker bewegen - map.controller.setCenter()
