@@ -132,11 +132,19 @@ object GpxImporter {
     /** Extrahiert einen Cache aus einem <wpt>. Liefert false, wenn es kein Cache ist (-> Wegpunkt). */
     private fun collectCache(wpt: Node, out: LinkedHashMap<String, MutableCache>): Boolean {
         val name = childText(wpt, "name")
-        if (!GC_RE.matches(name)) return false
+        val gs = firstChildByLocal(wpt, "cache")
+        // Ein <wpt> ist der Cache selbst (nicht einer seiner zusätzlichen Wegpunkte), wenn er
+        // einen <groundspeak:cache>-Block besitzt - das ist der zuverlässige Indikator aus der
+        // GPX-Spezifikation selbst und funktioniert für ALLE Cache-Typen, auch Adventure Labs,
+        // deren <name> KEIN "GCxxxxx"-Format hat, sondern eine GUID-artige Kennung wie
+        // "AL81F2D2B7-F86E-4E9D-A5ED-C8A144240A52" (das GC_RE-Muster hat solche Labs bisher
+        // komplett verworfen, wodurch auch ihre Stationen - ohne zugehörigen Cache - verloren
+        // gingen). Nur als Fallback für GPX-Dateien ganz ohne diesen Block greift weiterhin das
+        // klassische GC-Code-Format.
+        if (gs == null && !GC_RE.matches(name)) return false
 
         val lat = wpt.attrs["lat"]?.toDoubleOrNull() ?: 0.0
         val lon = wpt.attrs["lon"]?.toDoubleOrNull() ?: 0.0
-        val gs = firstChildByLocal(wpt, "cache")
 
         val rawType = if (gs != null) childText(gs, "type")
         else childText(wpt, "type").substringAfterLast("|").trim()
