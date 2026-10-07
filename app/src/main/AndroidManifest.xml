@@ -49,6 +49,11 @@
             android:foregroundServiceType="location"
             android:exported="false" />
 
+        <service
+            android:name=".location.TrackRecordingService"
+            android:foregroundServiceType="location"
+            android:exported="false" />
+
     </application>
 
 </manifest>

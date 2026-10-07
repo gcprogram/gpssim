@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.DirectionsBike
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.DirectionsWalk
+import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -189,7 +190,7 @@ private fun lastKnownRealLocation(context: Context): GeoPoint? {
 }
 
 @Composable
-fun MapScreen(onOpenCacheList: () -> Unit, onOpenWaypointList: () -> Unit) {
+fun MapScreen(onOpenCacheList: () -> Unit, onOpenWaypointList: () -> Unit, onOpenTracker: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -621,6 +622,12 @@ fun MapScreen(onOpenCacheList: () -> Unit, onOpenWaypointList: () -> Unit) {
                                 bitmap = labIcon.toBitmap().asImageBitmap(),
                                 contentDescription = "Cache-Liste (GPX)"
                             )
+                        }
+                        // Neue Seite: eingebauter GPS-Tracker (Aufzeichnen/Speichern/Laden/
+                        // beschleunigt Abspielen) - "Aufnahme"-Punkt-Icon, da auf dieser Seite
+                        // eine echte Aufzeichnung gestartet wird (siehe TrackerScreen.kt).
+                        Button(onClick = onOpenTracker) {
+                            Icon(Icons.Default.FiberManualRecord, contentDescription = "GPS-Tracker öffnen")
                         }
                     }
                     Row(

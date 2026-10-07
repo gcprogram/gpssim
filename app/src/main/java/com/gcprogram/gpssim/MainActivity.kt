@@ -20,11 +20,12 @@ import androidx.compose.ui.platform.LocalContext
 import com.gcprogram.gpssim.gpx.GpxRepository
 import com.gcprogram.gpssim.ui.CacheListScreen
 import com.gcprogram.gpssim.ui.MapScreen
+import com.gcprogram.gpssim.ui.TrackerScreen
 import com.gcprogram.gpssim.ui.WaypointListScreen
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-private enum class Overlay { CACHE_LIST, WAYPOINT_LIST }
+private enum class Overlay { CACHE_LIST, WAYPOINT_LIST, TRACKER }
 
 class MainActivity : ComponentActivity() {
 
@@ -57,11 +58,16 @@ class MainActivity : ComponentActivity() {
                     Box(modifier = Modifier.fillMaxSize()) {
                         MapScreen(
                             onOpenCacheList = { overlay = Overlay.CACHE_LIST },
-                            onOpenWaypointList = { overlay = Overlay.WAYPOINT_LIST }
+                            onOpenWaypointList = { overlay = Overlay.WAYPOINT_LIST },
+                            onOpenTracker = { overlay = Overlay.TRACKER }
                         )
                         when (overlay) {
                             Overlay.CACHE_LIST -> CacheListScreen(onBack = { overlay = null })
                             Overlay.WAYPOINT_LIST -> WaypointListScreen(onBack = { overlay = null })
+                            Overlay.TRACKER -> TrackerScreen(
+                                onBack = { overlay = null },
+                                onPlaybackStarted = { overlay = null }
+                            )
                             null -> {}
                         }
                     }
