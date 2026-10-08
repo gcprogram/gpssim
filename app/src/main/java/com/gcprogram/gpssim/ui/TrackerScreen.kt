@@ -29,9 +29,12 @@ import androidx.compose.material3.FilledIconToggleButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material.icons.filled.Map
+import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -44,6 +47,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.gcprogram.gpssim.location.MockLocationController
+import com.gcprogram.gpssim.location.MockLocationService
+import com.gcprogram.gpssim.location.PlaybackEngine
 import com.gcprogram.gpssim.location.RecordingState
 import com.gcprogram.gpssim.location.TrackRecorder
 import com.gcprogram.gpssim.location.TrackRecordingService
@@ -76,6 +82,13 @@ fun TrackerScreen(onBack: () -> Unit, onPlaybackStarted: () -> Unit) {
 
     val recordingState by TrackRecorder.state.collectAsState()
     val points by TrackRecorder.points.collectAsState()
+    val recordingIntervalMillis by TrackRecorder.intervalMillis.collectAsState()
+    val activeEngine by MockLocationController.activeEngine.collectAsState()
+    val playbackRunning by MockLocationController.isRunning.collectAsState()
+    val playbackServiceActive by MockLocationController.serviceActive.collectAsState()
+    val playbackProgress by MockLocationController.recordedProgress.collectAsState()
+    val currentAccelerationFactor by MockLocationController.accelerationFactor.collectAsState()
+    val isRecordedActive = activeEngine == PlaybackEngine.RECORDED && playbackServiceActive
 
     var trackName by remember {
         mutableStateOf("Track_" + SimpleDateFormat("yyyy-MM-dd_HHmm", Locale.getDefault()).format(Date()))
@@ -169,6 +182,24 @@ fun TrackerScreen(onBack: () -> Unit, onPlaybackStarted: () -> Unit) {
                         },
                         style = MaterialTheme.typography.bodySmall
                     )
+                    // Aufzeichnungsrate (Mindestabstand zwischen zwei GPS-Fixes) - nur im Zustand
+                    // IDLE wählbar, siehe TrackRecorder.setIntervalMillis(): ein Wechsel während
+                    // RECORDING/PAUSED würde den bereits laufenden LocationManager-Request nicht
+                    // mehr erreichen.
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        listOf(1000L to "1s", 5000L to "5s", 20000L to "20s").forEach { (ms, label) ->
+                            FilledIconToggleButton(
+                                checked = recordingIntervalMillis == ms,
+                                enabled = recordingState == RecordingState.IDLE,
+                                onCheckedChange = { if (it) TrackRecorder.setIntervalMillis(ms) }
+                            ) {
+                                Text(label)
+                            }
+                        }
+                    }
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                         horizontalArrangement = Arrangement.SpaceEvenly
@@ -305,28 +336,84 @@ fun TrackerScreen(onBack: () -> Unit, onPlaybackStarted: () -> Unit) {
                     ) {
                         listOf(1.0, 5.0, 10.0, 30.0, 60.0).forEach { factor ->
                             FilledIconToggleButton(
-                                checked = accelerationFactor == factor,
-                                onCheckedChange = { if (it) accelerationFactor = factor }
+                                // Solange die Wiedergabe läuft bzw. pausiert ist, zeigt der Chip den
+                                // tatsächlich eingestellten Faktor (geteilter Zustand in
+                                // MockLocationController) statt des lokalen Vorwahl-Werts.
+                                checked = (if (isRecordedActive) currentAccelerationFactor else accelerationFactor) == factor,
+                                onCheckedChange = {
+                                    if (it) {
+                                        accelerationFactor = factor
+                                        if (isRecordedActive) MockLocationController.setAccelerationFactor(factor)
+                                    }
+                                }
                             ) {
                                 Text("${factor.toInt()}x")
                             }
                         }
                     }
+
+                    // Fortschritt/Spulen - erst bedienbar, sobald die Wiedergabe mindestens einmal
+                    // gestartet wurde (siehe isRecordedActive): erst dann liegt ein Track in
+                    // RecordedTrackPlayer, auf den sich ein Sprung überhaupt bezieht.
                     Spacer(Modifier.height(8.dp))
-                    Button(
+                    Slider(
+                        value = if (isRecordedActive) playbackProgress else 0f,
+                        onValueChange = { if (isRecordedActive) MockLocationController.seekRecordedTo(it) },
+                        enabled = isRecordedActive,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Text(
+                        if (isRecordedActive) "${(playbackProgress * 100).toInt()} % der Aufzeichnung" else "Noch nicht gestartet",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+
+                    Spacer(Modifier.height(8.dp))
+                    Row(
                         modifier = Modifier.fillMaxWidth(),
-                        enabled = points.size >= 2 && recordingState == RecordingState.IDLE,
-                        onClick = {
-                            if (startRecordedPlayback(context, points, accelerationFactor)) {
-                                onPlaybackStarted()
-                            } else {
-                                statusText = "Mindestens 2 Punkte nötig, um abzuspielen"
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        // Play/Pause: vor dem ersten Start beginnt dieser Button die Wiedergabe neu
+                        // (Track + Faktor übernehmen, Service starten); danach pausiert/setzt er nur
+                        // noch fort - identisch zur Play/Pause-Logik auf der Kartenseite, nur direkt
+                        // hier bedienbar, ohne erst zur Karte wechseln zu müssen.
+                        Button(
+                            enabled = points.size >= 2 && recordingState == RecordingState.IDLE,
+                            onClick = {
+                                if (!isRecordedActive) {
+                                    if (!startRecordedPlayback(context, points, accelerationFactor)) {
+                                        statusText = "Mindestens 2 Punkte nötig, um abzuspielen"
+                                    }
+                                } else if (playbackRunning) {
+                                    MockLocationController.stop()
+                                } else {
+                                    MockLocationController.start()
+                                }
+                            }
+                        ) {
+                            Icon(
+                                if (isRecordedActive && playbackRunning) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                contentDescription = null
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text(if (isRecordedActive && playbackRunning) "Pause" else if (isRecordedActive) "Weiter" else "Abspielen")
+                        }
+                        if (isRecordedActive) {
+                            OutlinedButton(onClick = {
+                                MockLocationController.stop()
+                                MockLocationService.stop(context)
+                                MockLocationController.markServiceActive(false)
+                                MockLocationController.resetRecordedPlayback()
+                            }) {
+                                Icon(Icons.Default.RestartAlt, contentDescription = null)
+                                Spacer(Modifier.width(4.dp))
+                                Text("Stopp")
+                            }
+                            OutlinedButton(onClick = onPlaybackStarted) {
+                                Icon(Icons.Default.Map, contentDescription = null)
+                                Spacer(Modifier.width(4.dp))
+                                Text("Zur Karte")
                             }
                         }
-                    ) {
-                        Icon(Icons.Default.PlayArrow, contentDescription = null)
-                        Spacer(Modifier.width(4.dp))
-                        Text("Abspielen")
                     }
                 }
             }

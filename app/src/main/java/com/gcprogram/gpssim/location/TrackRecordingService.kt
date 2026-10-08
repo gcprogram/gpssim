@@ -72,10 +72,13 @@ class TrackRecordingService : Service() {
             }
         }
         listener = l
+        // Aufzeichnungsrate kommt aus TrackRecorder (vor dem Start in TrackerScreen gewählt,
+        // z.B. 1/5/20 Sekunden) statt eines festen Werts - siehe TrackRecorder.intervalMillis.
+        val minTimeMs = TrackRecorder.intervalMillis.value
         try {
             for (provider in listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)) {
                 if (locationManager.isProviderEnabled(provider)) {
-                    locationManager.requestLocationUpdates(provider, MIN_TIME_MS, MIN_DISTANCE_M, l)
+                    locationManager.requestLocationUpdates(provider, minTimeMs, MIN_DISTANCE_M, l)
                 }
             }
         } catch (e: SecurityException) {
@@ -101,7 +104,6 @@ class TrackRecordingService : Service() {
         private const val TAG = "TrackRecordingService"
         private const val CHANNEL_ID = "track_recording_channel"
         private const val NOTIFICATION_ID = 1002
-        private const val MIN_TIME_MS = 2000L
         private const val MIN_DISTANCE_M = 3f
 
         fun start(context: Context) {

@@ -105,6 +105,11 @@ object MockLocationController {
     val accelerationFactor: StateFlow<Double> get() = recordedPlayer.accelerationFactor
     fun setAccelerationFactor(factor: Double) = recordedPlayer.setAccelerationFactor(factor)
 
+    // Fortschritt 0f..1f + Spulen - für den Fortschrittsregler in TrackerScreen.
+    val recordedProgress: StateFlow<Float> get() = recordedPlayer.progress
+    fun seekRecordedTo(fraction: Float) = recordedPlayer.seekTo(fraction)
+    fun resetRecordedPlayback() = recordedPlayer.reset()
+
     // -- Gemeinsame Steuerung: wirkt auf die zuletzt aktivierte Engine ---------------------------
     fun start() {
         when (_activeEngine.value) {

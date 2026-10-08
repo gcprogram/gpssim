@@ -35,6 +35,11 @@ class RecordedTrackPlayer(private val scope: CoroutineScope) {
     private val _currentPosition = MutableStateFlow<SimulatedPosition?>(null)
     val currentPosition: StateFlow<SimulatedPosition?> = _currentPosition.asStateFlow()
 
+    // Fortschritt 0f..1f innerhalb des geladenen Tracks - für eine Spul-/Fortschrittsanzeige in
+    // TrackerScreen (siehe seekTo()), unabhängig vom Beschleunigungsfaktor.
+    private val _progress = MutableStateFlow(0f)
+    val progress: StateFlow<Float> = _progress.asStateFlow()
+
     private val _accelerationFactor = MutableStateFlow(10.0)
     val accelerationFactor: StateFlow<Double> = _accelerationFactor.asStateFlow()
     fun setAccelerationFactor(factor: Double) {
@@ -86,6 +91,18 @@ class RecordedTrackPlayer(private val scope: CoroutineScope) {
         emitAt(0L)
     }
 
+    /**
+     * Springt (im gestoppten ODER laufenden Zustand) an die angegebene Stelle im Track - das
+     * "Spulen" in TrackerScreen. fraction wird auf 0..1 begrenzt; bei laufender Wiedergabe läuft
+     * sie ab der neuen Stelle normal weiter.
+     */
+    fun seekTo(fraction: Float) {
+        if (track.size < 2) return
+        val totalMs = (track.last().timestampMillis - track.first().timestampMillis).coerceAtLeast(0L)
+        virtualElapsedMs = (totalMs * fraction.coerceIn(0f, 1f).toDouble()).toLong()
+        emitAt(virtualElapsedMs)
+    }
+
     private fun emitAt(elapsedMs: Long) {
         if (track.size < 2) {
             val only = track.firstOrNull() ?: return
@@ -93,8 +110,11 @@ class RecordedTrackPlayer(private val scope: CoroutineScope) {
                 latitude = only.latitude, longitude = only.longitude,
                 bearing = 0f, speedMps = 0f, segmentIndex = 0
             )
+            _progress.value = 0f
             return
         }
+        val totalMs = (track.last().timestampMillis - track.first().timestampMillis).coerceAtLeast(1L)
+        _progress.value = (elapsedMs.toDouble() / totalMs).toFloat().coerceIn(0f, 1f)
         val startTime = track.first().timestampMillis
         val targetTime = startTime + elapsedMs
 

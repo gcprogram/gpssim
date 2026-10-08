@@ -25,6 +25,16 @@ object TrackRecorder {
     private val _points = MutableStateFlow<List<RecordedPoint>>(emptyList())
     val points: StateFlow<List<RecordedPoint>> = _points.asStateFlow()
 
+    // Mindestabstand zwischen zwei aufgezeichneten Fixes - von TrackerScreen wählbar (1s/5s/20s),
+    // von TrackRecordingService bei registerListener() gelesen. Ändern während einer laufenden
+    // Aufzeichnung wirkt erst ab dem nächsten Start (locationManager.requestLocationUpdates()
+    // wird nicht neu aufgesetzt), daher in der UI nur im Zustand IDLE anbietbar.
+    private val _intervalMillis = MutableStateFlow(5000L)
+    val intervalMillis: StateFlow<Long> = _intervalMillis.asStateFlow()
+    fun setIntervalMillis(ms: Long) {
+        _intervalMillis.value = ms
+    }
+
     /** Startet eine NEUE Aufzeichnung - verwirft einen vorher geladenen/aufgezeichneten Track. */
     fun start() {
         _points.value = emptyList()

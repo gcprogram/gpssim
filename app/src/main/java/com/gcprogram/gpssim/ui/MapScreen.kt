@@ -238,6 +238,16 @@ fun MapScreen(onOpenCacheList: () -> Unit, onOpenWaypointList: () -> Unit, onOpe
             outlinePaint.strokeWidth = 8f
         }
     }
+    // Zeigt den GPS-Tracker-Track (laufende Aufzeichnung ODER geladene/abzuspielende Tour, siehe
+    // TrackRecorder) als eigene Linie - unabhängig von der manuellen Wegpunktliste oben, daher
+    // eigene Farbe (Orange) und eigener Overlay, keine past/future-Aufteilung (die wäre hier wegen
+    // des bekannten Index-Mismatchs zwischen RecordedPoint- und TrackPoint-Listen nicht sinnvoll).
+    val recordedTrackPolyline = remember {
+        Polyline().apply {
+            outlinePaint.color = Color.rgb(255, 140, 0)
+            outlinePaint.strokeWidth = 8f
+        }
+    }
     // Simulierte Position: kleiner Roboter/Androide (siehe MapIconFactory.robotMarker) -
     // unterscheidet sie auf einen Blick von der echten, unsimulierten Position (Männchen-Icon).
     val currentPositionMarker = remember {
@@ -304,6 +314,15 @@ fun MapScreen(onOpenCacheList: () -> Unit, onOpenWaypointList: () -> Unit, onOpe
             redrawTrack(pts)
             MockLocationController.setTrack(pts)
             statusText = "${pts.size} Wegpunkt(e) gesetzt"
+        }
+    }
+
+    // Aufgezeichneten/geladenen Tracker-Track (siehe TrackerScreen) als eigene Linie nachführen -
+    // unabhängig davon, ob gerade aufgezeichnet, nur geladen, oder abgespielt wird.
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        com.gcprogram.gpssim.location.TrackRecorder.points.collectLatest { pts ->
+            recordedTrackPolyline.setPoints(pts.map { GeoPoint(it.latitude, it.longitude) })
+            mapView.invalidate()
         }
     }
 
@@ -725,6 +744,7 @@ fun MapScreen(onOpenCacheList: () -> Unit, onOpenWaypointList: () -> Unit, onOpe
                             overlays.add(mapEventsOverlay)
                             overlays.add(trackPolylineFuture)
                             overlays.add(trackPolylinePast)
+                            overlays.add(recordedTrackPolyline)
                             // Maßstabsbalken oben links
                             overlays.add(
                                 ScaleBarOverlay(this).apply {
