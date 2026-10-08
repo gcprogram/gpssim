@@ -267,6 +267,21 @@ fun MapScreen(onOpenCacheList: () -> Unit, onOpenWaypointList: () -> Unit, onOpe
         }
     }
 
+    // Setzt/zeigt den Männchen-Marker an `point` - zentrale Stelle statt den Marker nur im Live-
+    // LocationListener weiter unten zu pflegen: VORHER passierte das NUR dort, sodass der Marker
+    // direkt nach dem App-Start (und auch nach einem Druck auf "Auf Position zentrieren") fehlte,
+    // bis die erste LIVE-Ortung eintraf - das konnte draußen Sekunden dauern und drinnen ganz
+    // ausbleiben, obwohl über lastKnownRealLocation() oft längst eine gültige (zwischengespeicherte)
+    // Position bekannt war. Jetzt nutzen App-Start, der "Zentrieren"-Button UND der Live-Listener
+    // dieselbe Funktion, sodass der Marker so früh wie möglich erscheint.
+    fun showRealPositionMarker(point: GeoPoint) {
+        realPositionMarker.position = point
+        if (!mapView.overlays.contains(realPositionMarker)) {
+            mapView.overlays.add(realPositionMarker)
+        }
+        mapView.invalidate()
+    }
+
     // Teilt die Wegpunktliste an der aktuellen simulierten Position (SimulatedPosition.segmentIndex,
     // siehe TrackSimulator) in einen gefahrenen (grau) und einen bevorstehenden (blau) Abschnitt.
     // Ohne aktive Position (Simulation nie gestartet oder gestoppt/zurückgesetzt) ist alles blau.
@@ -452,11 +467,7 @@ fun MapScreen(onOpenCacheList: () -> Unit, onOpenWaypointList: () -> Unit, onOpe
                 }
                 val point = GeoPoint(location.latitude, location.longitude)
                 lastRealFix = point
-                realPositionMarker.position = point
-                if (!mapView.overlays.contains(realPositionMarker)) {
-                    mapView.overlays.add(realPositionMarker)
-                }
-                mapView.invalidate()
+                showRealPositionMarker(point)
             }
         }
         val hasPermission = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
@@ -529,6 +540,7 @@ fun MapScreen(onOpenCacheList: () -> Unit, onOpenWaypointList: () -> Unit, onOpe
     LaunchedEffect(Unit) {
         lastKnownRealLocation(context)?.let { point ->
             lastRealFix = point
+            showRealPositionMarker(point)
             mapView.controller.setCenter(point)
             mapView.invalidate()
             pasteText = CoordinateParser.format(point.latitude, point.longitude)
@@ -549,8 +561,14 @@ fun MapScreen(onOpenCacheList: () -> Unit, onOpenWaypointList: () -> Unit, onOpe
                     } else {
                         lastRealFix
                     }
-                    target?.let { mapView.controller.animateTo(it) }
-                        ?: run { statusText = "Noch keine echte GPS-Position bekannt" }
+                    target?.let {
+                        // Nicht nur die Kamera bewegen, sondern auch den Männchen-Marker dorthin
+                        // setzen/anzeigen - vorher blieb er unsichtbar, solange der Live-Listener
+                        // noch keine eigene Ortung geliefert hatte, obwohl hier bereits eine
+                        // gültige Position vorlag (siehe showRealPositionMarker()).
+                        showRealPositionMarker(it)
+                        mapView.controller.animateTo(it)
+                    } ?: run { statusText = "Noch keine echte GPS-Position bekannt" }
                 }) {
                     Icon(Icons.Default.MyLocation, contentDescription = "Auf Position zentrieren")
                 }
