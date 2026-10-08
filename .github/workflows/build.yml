@@ -1,7 +1,9 @@
 name: Build APK
 
+# Läuft NICHT mehr automatisch bei jedem Push - das übernimmt jetzt "Unzip and build" direkt im
+# selben Lauf (siehe unzip-and-build.yml). Nur noch manuell startbar, für einen Rebuild ohne
+# neuen Zip-Upload (z.B. nach einer direkten Änderung im Web-Editor).
 on:
-  push:
   workflow_dispatch:
 
 jobs:
