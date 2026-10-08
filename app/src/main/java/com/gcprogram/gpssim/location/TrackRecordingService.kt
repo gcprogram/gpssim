@@ -17,6 +17,14 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.gcprogram.gpssim.R
 import com.gcprogram.gpssim.geo.RecordedPoint
+import com.gcprogram.gpssim.recording.AutosaveStore
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 
 /**
  * Foreground-Service für die GPS-Aufzeichnung - läuft unabhängig von der sichtbaren App weiter
@@ -24,17 +32,24 @@ import com.gcprogram.gpssim.geo.RecordedPoint
  * Hintergrund zuverlässig aufgezeichnet wird. Schreibt eintreffende Fixes in [TrackRecorder];
  * ob sie tatsächlich übernommen werden (nur während RecordingState.RECORDING), entscheidet der
  * Recorder selbst.
+ *
+ * Schreibt zusätzlich alle paar Minuten eine automatische Zwischensicherung (siehe
+ * [AutosaveStore]) sowie einmal beim Beenden - ein Sicherheitsnetz, falls der Prozess vor dem
+ * bewussten "Speichern" endet (App "Kraft stoppen", Akku-Management, Absturz).
  */
 class TrackRecordingService : Service() {
 
     private lateinit var locationManager: LocationManager
     private var listener: LocationListener? = null
+    private val serviceScope = CoroutineScope(SupervisorJob())
+    private var autosaveJob: Job? = null
 
     override fun onCreate() {
         super.onCreate()
         locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
         startForeground(NOTIFICATION_ID, buildNotification())
         registerListener()
+        startAutosaveLoop()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
@@ -42,6 +57,24 @@ class TrackRecordingService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         listener?.let { l -> runCatching { locationManager.removeUpdates(l) } }
+        // Letzte Sicherung beim regulären Stopp - danach löscht TrackerScreen sie wieder, sobald
+        // bewusst exportiert oder verworfen wurde (siehe AutosaveStore.clear()).
+        writeAutosave()
+        autosaveJob?.cancel()
+        serviceScope.cancel()
+    }
+
+    private fun startAutosaveLoop() {
+        autosaveJob = serviceScope.launch {
+            while (isActive) {
+                delay(AUTOSAVE_INTERVAL_MS)
+                writeAutosave()
+            }
+        }
+    }
+
+    private fun writeAutosave() {
+        AutosaveStore.write(this, TrackRecorder.points.value, TrackRecorder.trackName.value)
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -105,6 +138,7 @@ class TrackRecordingService : Service() {
         private const val CHANNEL_ID = "track_recording_channel"
         private const val NOTIFICATION_ID = 1002
         private const val MIN_DISTANCE_M = 3f
+        private const val AUTOSAVE_INTERVAL_MS = 3 * 60 * 1000L
 
         fun start(context: Context) {
             ContextCompat.startForegroundService(context, Intent(context, TrackRecordingService::class.java))

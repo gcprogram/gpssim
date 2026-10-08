@@ -25,6 +25,15 @@ object TrackRecorder {
     private val _points = MutableStateFlow<List<RecordedPoint>>(emptyList())
     val points: StateFlow<List<RecordedPoint>> = _points.asStateFlow()
 
+    // Name der aktuellen Tour - wird beim Start abgefragt (siehe TrackerScreen) statt nur beim
+    // Speichern, damit auch die automatische Zwischensicherung (AutosaveStore/TrackRecordingService)
+    // von Anfang an einen sinnvollen Namen in die GPX-<name> schreiben kann.
+    private val _trackName = MutableStateFlow("")
+    val trackName: StateFlow<String> = _trackName.asStateFlow()
+    fun setTrackName(name: String) {
+        _trackName.value = name
+    }
+
     // Mindestabstand zwischen zwei aufgezeichneten Fixes - von TrackerScreen wählbar (1s/5s/20s),
     // von TrackRecordingService bei registerListener() gelesen. Ändern während einer laufenden
     // Aufzeichnung wirkt erst ab dem nächsten Start (locationManager.requestLocationUpdates()

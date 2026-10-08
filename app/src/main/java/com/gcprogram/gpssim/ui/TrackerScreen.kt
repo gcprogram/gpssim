@@ -22,6 +22,8 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -36,17 +38,21 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.gcprogram.gpssim.location.BatteryOptimization
 import com.gcprogram.gpssim.location.MockLocationController
 import com.gcprogram.gpssim.location.MockLocationService
 import com.gcprogram.gpssim.location.PlaybackEngine
@@ -54,6 +60,7 @@ import com.gcprogram.gpssim.location.RecordingState
 import com.gcprogram.gpssim.location.TrackRecorder
 import com.gcprogram.gpssim.location.TrackRecordingService
 import com.gcprogram.gpssim.location.startRecordedPlayback
+import com.gcprogram.gpssim.recording.AutosaveStore
 import com.gcprogram.gpssim.recording.GpxTrackExporter
 import com.gcprogram.gpssim.recording.KmlTrackExporter
 import com.gcprogram.gpssim.recording.RecordedTrackImporter
@@ -63,6 +70,9 @@ import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+
+private fun defaultTrackName(): String =
+    "Track_" + SimpleDateFormat("yyyy-MM-dd_HHmm", Locale.getDefault()).format(Date())
 
 /**
  * Neue Seite: eingebauter GPS-Tracker. Drei Funktionsblöcke:
@@ -90,11 +100,28 @@ fun TrackerScreen(onBack: () -> Unit, onPlaybackStarted: () -> Unit) {
     val currentAccelerationFactor by MockLocationController.accelerationFactor.collectAsState()
     val isRecordedActive = activeEngine == PlaybackEngine.RECORDED && playbackServiceActive
 
-    var trackName by remember {
-        mutableStateOf("Track_" + SimpleDateFormat("yyyy-MM-dd_HHmm", Locale.getDefault()).format(Date()))
-    }
+    // Geteilter Zustand (TrackRecorder) statt rein lokalem State - damit sowohl die periodische
+    // Zwischensicherung (TrackRecordingService) als auch diese UI denselben Tournamen kennen.
+    val trackName by TrackRecorder.trackName.collectAsState()
     var accelerationFactor by remember { mutableStateOf(10.0) }
     var statusText by remember { mutableStateOf<String?>(null) }
+
+    // -- Start-Dialog: fragt den Namen ab und warnt bei aktiver Akku-Optimierung ------------------
+    var showStartDialog by remember { mutableStateOf(false) }
+    var startDialogName by remember { mutableStateOf("") }
+
+    // -- Wiederherstellung einer automatischen Zwischensicherung (siehe AutosaveStore) -------------
+    // Nur relevant direkt nach einem Neustart der App: solange TrackRecorder noch Punkte im
+    // Speicher hat (laufende Aufzeichnung überlebt Bildschirmwechsel), ist nichts wiederherzustellen.
+    var showRecoveryBanner by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        if (TrackRecorder.points.value.isEmpty() &&
+            TrackRecorder.state.value == RecordingState.IDLE &&
+            AutosaveStore.exists(context)
+        ) {
+            showRecoveryBanner = true
+        }
+    }
 
     // -- Speichern: GPX bzw. KML, jeweils über den System-Dateiauswahldialog ----------------------
     val saveGpxLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/gpx+xml")) { uri ->
@@ -104,6 +131,10 @@ fun TrackerScreen(onBack: () -> Unit, onPlaybackStarted: () -> Unit) {
                 val ok = runCatching {
                     context.contentResolver.openOutputStream(uri)?.use { it.write(xml.toByteArray()) }
                 }.isSuccess
+                // Zwischensicherung wird nach einem bewussten Export nur gelöscht, wenn die
+                // Aufzeichnung auch wirklich beendet ist - läuft sie noch (RECORDING/PAUSED),
+                // muss sie weiter als Sicherheitsnetz für die FOLGENDEN Punkte bestehen bleiben.
+                if (ok && TrackRecorder.state.value == RecordingState.IDLE) AutosaveStore.clear(context)
                 withContext(Dispatchers.Main) {
                     statusText = if (ok) "Als GPX gespeichert" else "GPX konnte nicht gespeichert werden"
                 }
@@ -117,6 +148,7 @@ fun TrackerScreen(onBack: () -> Unit, onPlaybackStarted: () -> Unit) {
                 val ok = runCatching {
                     context.contentResolver.openOutputStream(uri)?.use { it.write(xml.toByteArray()) }
                 }.isSuccess
+                if (ok && TrackRecorder.state.value == RecordingState.IDLE) AutosaveStore.clear(context)
                 withContext(Dispatchers.Main) {
                     statusText = if (ok) "Als KML gespeichert" else "KML konnte nicht gespeichert werden"
                 }
@@ -170,6 +202,35 @@ fun TrackerScreen(onBack: () -> Unit, onPlaybackStarted: () -> Unit) {
                 Text(it, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(bottom = 8.dp))
             }
 
+            // -- Wiederherstellung: eine automatische Zwischensicherung wurde gefunden, obwohl
+            // gerade nichts in der App liegt - deutet auf einen harten Abbruch während einer
+            // vorherigen Aufzeichnung hin (App "Kraft stoppen", Akku-Management, Absturz).
+            if (showRecoveryBanner) {
+                Card(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(
+                            "Automatische Zwischensicherung einer vorherigen Aufzeichnung gefunden.",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End) {
+                            TextButton(onClick = {
+                                AutosaveStore.clear(context)
+                                showRecoveryBanner = false
+                            }) { Text("Verwerfen") }
+                            Spacer(Modifier.width(8.dp))
+                            Button(onClick = {
+                                val loaded = AutosaveStore.load(context)
+                                if (loaded.size >= 2) {
+                                    TrackRecorder.loadExternal(loaded)
+                                    statusText = "${loaded.size} Punkt(e) aus Zwischensicherung geladen"
+                                }
+                                showRecoveryBanner = false
+                            }) { Text("Laden") }
+                        }
+                    }
+                }
+            }
+
             // -- Block 1: Aufzeichnung --------------------------------------------------------------
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(12.dp)) {
@@ -206,9 +267,12 @@ fun TrackerScreen(onBack: () -> Unit, onPlaybackStarted: () -> Unit) {
                     ) {
                         when (recordingState) {
                             RecordingState.IDLE -> {
+                                // Öffnet den Namens-/Akku-Dialog statt direkt zu starten (siehe
+                                // showStartDialog weiter unten) - der Nutzer wollte den Namen
+                                // bewusst am Anfang statt erst beim Speichern festlegen.
                                 Button(onClick = {
-                                    TrackRecorder.start()
-                                    TrackRecordingService.start(context)
+                                    startDialogName = trackName.ifBlank { defaultTrackName() }
+                                    showStartDialog = true
                                 }) {
                                     Icon(Icons.Default.FiberManualRecord, contentDescription = null)
                                     Spacer(Modifier.width(4.dp))
@@ -276,7 +340,7 @@ fun TrackerScreen(onBack: () -> Unit, onPlaybackStarted: () -> Unit) {
                     Text("Speichern / Laden", style = MaterialTheme.typography.titleMedium)
                     OutlinedTextField(
                         value = trackName,
-                        onValueChange = { trackName = it },
+                        onValueChange = { TrackRecorder.setTrackName(it) },
                         label = { Text("Name") },
                         modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
                     )
@@ -311,7 +375,10 @@ fun TrackerScreen(onBack: () -> Unit, onPlaybackStarted: () -> Unit) {
                             modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                             horizontalArrangement = Arrangement.End
                         ) {
-                            IconButton(onClick = { TrackRecorder.clear() }) {
+                            IconButton(onClick = {
+                                TrackRecorder.clear()
+                                AutosaveStore.clear(context)
+                            }) {
                                 Icon(Icons.Default.Delete, contentDescription = "Aufzeichnung verwerfen")
                             }
                         }
@@ -418,5 +485,66 @@ fun TrackerScreen(onBack: () -> Unit, onPlaybackStarted: () -> Unit) {
                 }
             }
         }
+    }
+
+    // -- Start-Dialog: Name abfragen, bei aktiver Akku-Optimierung warnen --------------------------
+    if (showStartDialog) {
+        // Bewusst kein remember{} - soll bei jeder Recomposition (z.B. nach Rückkehr aus den
+        // Systemeinstellungen) neu geprüft werden, damit die Warnung verschwindet, sobald die
+        // Akku-Optimierung tatsächlich deaktiviert wurde.
+        val batteryIgnoring = BatteryOptimization.isIgnoring(context)
+        AlertDialog(
+            onDismissRequest = { showStartDialog = false },
+            title = { Text("Neue Aufzeichnung starten") },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = startDialogName,
+                        onValueChange = { startDialogName = it },
+                        label = { Text("Name der Tour") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    if (!batteryIgnoring) {
+                        Spacer(Modifier.height(12.dp))
+                        Row(verticalAlignment = Alignment.Top) {
+                            Icon(
+                                Icons.Default.Warning,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Column {
+                                Text(
+                                    "Energiesparen ist für diese App noch aktiv. Manche Hersteller " +
+                                        "beenden Hintergrund-Apps trotzdem, auch während einer " +
+                                        "laufenden Aufzeichnung.",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                                TextButton(onClick = {
+                                    context.startActivity(BatteryOptimization.requestIgnoreIntent(context))
+                                }) {
+                                    Text("Jetzt deaktivieren")
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    TrackRecorder.setTrackName(startDialogName.ifBlank { defaultTrackName() })
+                    TrackRecorder.start()
+                    TrackRecordingService.start(context)
+                    showStartDialog = false
+                }) {
+                    Text("Start")
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showStartDialog = false }) {
+                    Text("Abbrechen")
+                }
+            }
+        )
     }
 }

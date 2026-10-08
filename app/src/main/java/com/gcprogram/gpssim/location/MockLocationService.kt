@@ -47,6 +47,12 @@ class MockLocationService : Service() {
     private lateinit var locationManager: LocationManager
     private var providerReady = false
 
+    // Aktueller Genauigkeits-"Radius" (Jitter) - driftet langsam innerhalb von JITTER_MIN/MAX_METERS
+    // statt fest bei einem Wert zu stehen (siehe pushMockLocation()/randomWalkJitter()), ähnlich wie
+    // sich die gemeldete Genauigkeit eines echten GPS-Empfängers je nach Satellitensicht laufend
+    // etwas ändert. Startet in der Mitte des Bandes.
+    private var currentJitterRadius = (JITTER_MIN_METERS + JITTER_MAX_METERS) / 2.0
+
     override fun onCreate() {
         super.onCreate()
         locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
@@ -108,12 +114,20 @@ class MockLocationService : Service() {
     private fun pushMockLocation(lat: Double, lon: Double, bearing: Float, speed: Float) {
         try {
             val jitterOn = MockLocationController.jitterEnabled.value
-            val (reportedLat, reportedLon) = if (jitterOn) applyJitter(lat, lon) else lat to lon
+            if (jitterOn) {
+                // Genauigkeit vor jedem Update leicht weiterdriften lassen statt fest zu stehen -
+                // siehe currentJitterRadius oben.
+                currentJitterRadius = randomWalkJitter(currentJitterRadius)
+            }
+            val (reportedLat, reportedLon) = if (jitterOn) applyJitter(lat, lon, currentJitterRadius) else lat to lon
             val location = Location(LocationManager.GPS_PROVIDER).apply {
                 latitude = reportedLat
                 longitude = reportedLon
                 altitude = 0.0
-                accuracy = if (jitterOn) JITTER_MAX_METERS.toFloat() else 5f
+                // Gemeldete Genauigkeit entspricht dem tatsächlich angewandten Jitter-Radius - ein
+                // Tool, das den accuracy-Wert anzeigt (z.B. Geocaching-Apps), sieht also eine
+                // plausibel schwankende Zahl statt eines stur konstanten Werts.
+                accuracy = if (jitterOn) currentJitterRadius.toFloat() else 5f
                 this.bearing = bearing
                 this.speed = speed
                 time = System.currentTimeMillis()
@@ -125,18 +139,24 @@ class MockLocationService : Service() {
         }
     }
 
+    /** Kleiner Zufallsschritt um `current`, auf [JITTER_MIN_METERS, JITTER_MAX_METERS] begrenzt. */
+    private fun randomWalkJitter(current: Double): Double {
+        val delta = (Random.nextDouble() * 2.0 - 1.0) * JITTER_STEP_METERS
+        return (current + delta).coerceIn(JITTER_MIN_METERS, JITTER_MAX_METERS)
+    }
+
     /**
-     * Zufälliger Versatz innerhalb eines Kreises mit JITTER_MAX_METERS Radius, gleichverteilt
-     * über die Fläche (sqrt(random) statt random als Radius-Faktor) - simuliert die übliche
+     * Zufälliger Versatz innerhalb eines Kreises mit `radiusMeters` Radius, gleichverteilt über
+     * die Fläche (sqrt(random) statt random als Radius-Faktor) - simuliert die übliche
      * Positionsungenauigkeit echter GPS-Empfänger. Wirkt NUR auf die gemeldete Position, der
      * simulierte Track/Marker im UI bleibt exakt auf dem gewählten Weg.
      */
-    private fun applyJitter(lat: Double, lon: Double): Pair<Double, Double> {
-        val radiusMeters = sqrt(Random.nextDouble()) * JITTER_MAX_METERS
+    private fun applyJitter(lat: Double, lon: Double, radiusMeters: Double): Pair<Double, Double> {
+        val actualRadius = sqrt(Random.nextDouble()) * radiusMeters
         val angle = Random.nextDouble(0.0, 2 * PI)
-        val dLat = (radiusMeters * cos(angle)) / METERS_PER_DEGREE_LAT
+        val dLat = (actualRadius * cos(angle)) / METERS_PER_DEGREE_LAT
         val metersPerDegreeLon = METERS_PER_DEGREE_LAT * cos(Math.toRadians(lat)).coerceAtLeast(0.01)
-        val dLon = (radiusMeters * sin(angle)) / metersPerDegreeLon
+        val dLon = (actualRadius * sin(angle)) / metersPerDegreeLon
         return (lat + dLat) to (lon + dLon)
     }
 
@@ -169,7 +189,12 @@ class MockLocationService : Service() {
         private const val TAG = "MockLocationService"
         private const val CHANNEL_ID = "gps_sim_channel"
         private const val NOTIFICATION_ID = 1001
-        private const val JITTER_MAX_METERS = 5.0
+        // Band, innerhalb dessen die gemeldete Genauigkeit langsam driftet (siehe currentJitterRadius) -
+        // 2-12 m deckt die übliche Schwankungsbreite eines Smartphone-GPS-Empfängers unter freiem
+        // Himmel ab; JITTER_STEP_METERS begrenzt die Drift pro Positions-Update auf ein sanftes Maß.
+        private const val JITTER_MIN_METERS = 2.0
+        private const val JITTER_MAX_METERS = 12.0
+        private const val JITTER_STEP_METERS = 0.6
         private const val METERS_PER_DEGREE_LAT = 111320.0
 
         fun start(context: Context) {

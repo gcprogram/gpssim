@@ -19,6 +19,12 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Für den Hinweis "Energiesparen deaktivieren" beim Start einer Aufzeichnung (siehe
+         TrackerScreen/BatteryOptimization) - normale, nicht gefährliche Berechtigung, muss nicht
+         zur Laufzeit angefragt werden, erlaubt aber den Direkt-Dialog
+         ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS statt nur den Umweg über die Systemeinstellungen -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"

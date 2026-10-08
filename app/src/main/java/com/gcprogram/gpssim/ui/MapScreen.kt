@@ -678,7 +678,7 @@ fun MapScreen(onOpenCacheList: () -> Unit, onOpenWaypointList: () -> Unit, onOpe
                             ) { Icon(Icons.Default.RocketLaunch, contentDescription = SpeedPreset.ROCKET.label) }
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("Jitter ±5m", style = MaterialTheme.typography.bodySmall)
+                            Text("GPS-Ungenauigkeit (2-12m, variabel)", style = MaterialTheme.typography.bodySmall)
                             Switch(
                                 checked = jitterEnabled,
                                 onCheckedChange = { checked -> MockLocationController.setJitterEnabled(checked) }
