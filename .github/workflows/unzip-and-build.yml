@@ -1,6 +1,14 @@
 name: Unzip and build
 
+# Läuft jetzt automatisch, sobald gps-simulator.zip im Repo-Root geändert wird (z.B. durch
+# "Add file -> Upload files") - kein manuelles Starten mehr nötig. workflow_dispatch bleibt als
+# Fallback erhalten, falls der Zip-Datei-Name mal abweicht oder der Lauf manuell wiederholt werden
+# soll. Entpacken UND Bauen laufen im selben Job, direkt nacheinander, ohne Umweg über einen
+# zweiten, separat zu startenden Workflow.
 on:
+  push:
+    paths:
+      - "gps-simulator.zip"
   workflow_dispatch:
     inputs:
       zip_file:
@@ -12,16 +20,18 @@ permissions:
   contents: write
 
 jobs:
-  unzip:
+  unzip-and-build:
     runs-on: ubuntu-latest
+    env:
+      ZIP_FILE: ${{ github.event.inputs.zip_file || 'gps-simulator.zip' }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Prüfen, ob die Zip-Datei existiert
         run: |
-          if [ ! -f "${{ github.event.inputs.zip_file }}" ]; then
-            echo "Datei '${{ github.event.inputs.zip_file }}' nicht im Repo-Root gefunden."
-            echo "Erst per 'Add file -> Upload files' hochladen, dann diesen Workflow erneut starten."
+          if [ ! -f "$ZIP_FILE" ]; then
+            echo "Datei '$ZIP_FILE' nicht im Repo-Root gefunden."
+            echo "Erst per 'Add file -> Upload files' hochladen - der Workflow startet dann von selbst."
             exit 1
           fi
 
@@ -31,8 +41,8 @@ jobs:
           # GITHUB_TOKEN darf Workflow-Dateien nicht per Push ändern (GitHub-Sicherheitsregel,
           # "refusing to allow a GitHub App to create or update workflow ... without
           # workflows permission"). Workflow-Dateien immer manuell per Web-UI hochladen.
-          unzip -o "${{ github.event.inputs.zip_file }}" -d . -x ".github/workflows/*"
-          rm -f "${{ github.event.inputs.zip_file }}"
+          unzip -o "$ZIP_FILE" -d . -x ".github/workflows/*"
+          rm -f "$ZIP_FILE"
 
       - name: Änderungen committen und pushen
         run: |
@@ -42,6 +52,34 @@ jobs:
           if git diff --cached --quiet; then
             echo "Keine Änderungen nach dem Entpacken - nichts zu committen."
           else
-            git commit -m "Entpackt: ${{ github.event.inputs.zip_file }}"
+            git commit -m "Entpackt: $ZIP_FILE"
             git push
           fi
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Android-SDK-Lizenzen akzeptieren und benötigte Pakete installieren
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Generate Gradle wrapper
+        run: gradle wrapper --gradle-version 8.9
+
+      - name: Build debug APK
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: gps-simulator-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
