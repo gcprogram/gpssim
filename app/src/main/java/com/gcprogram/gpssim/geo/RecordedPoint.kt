@@ -11,5 +11,8 @@ data class RecordedPoint(
     val longitude: Double,
     val timestampMillis: Long,
     val altitude: Double? = null,
-    val speedMps: Float? = null
+    val speedMps: Float? = null,
+    /** Vom GPS-Empfänger gemeldeter Genauigkeitsradius in Metern (Location.getAccuracy()),
+     * falls vorhanden - siehe GpxTrackExporter für das Export-Format (<hdop> + <extensions>). */
+    val accuracyMeters: Float? = null
 )

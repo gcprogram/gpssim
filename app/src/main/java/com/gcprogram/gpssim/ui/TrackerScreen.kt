@@ -110,16 +110,16 @@ fun TrackerScreen(onBack: () -> Unit, onPlaybackStarted: () -> Unit) {
     var showStartDialog by remember { mutableStateOf(false) }
     var startDialogName by remember { mutableStateOf("") }
 
-    // -- Wiederherstellung einer automatischen Zwischensicherung (siehe AutosaveStore) -------------
+    // -- Wiederherstellung automatischer Zwischensicherungen (siehe AutosaveStore) -----------------
     // Nur relevant direkt nach einem Neustart der App: solange TrackRecorder noch Punkte im
     // Speicher hat (laufende Aufzeichnung überlebt Bildschirmwechsel), ist nichts wiederherzustellen.
-    var showRecoveryBanner by remember { mutableStateOf(false) }
+    // Es kann MEHRERE geben (mehrere nicht abgeholte Abstürze hintereinander) - jede frühere
+    // Aufzeichnung hat ihre eigene Datei (siehe AutosaveStore), daher eine Liste statt nur einem
+    // einzigen Banner.
+    var recoverable by remember { mutableStateOf<List<AutosaveStore.Recoverable>>(emptyList()) }
     LaunchedEffect(Unit) {
-        if (TrackRecorder.points.value.isEmpty() &&
-            TrackRecorder.state.value == RecordingState.IDLE &&
-            AutosaveStore.exists(context)
-        ) {
-            showRecoveryBanner = true
+        if (TrackRecorder.points.value.isEmpty() && TrackRecorder.state.value == RecordingState.IDLE) {
+            recoverable = AutosaveStore.listRecoverable(context)
         }
     }
 
@@ -134,7 +134,7 @@ fun TrackerScreen(onBack: () -> Unit, onPlaybackStarted: () -> Unit) {
                 // Zwischensicherung wird nach einem bewussten Export nur gelöscht, wenn die
                 // Aufzeichnung auch wirklich beendet ist - läuft sie noch (RECORDING/PAUSED),
                 // muss sie weiter als Sicherheitsnetz für die FOLGENDEN Punkte bestehen bleiben.
-                if (ok && TrackRecorder.state.value == RecordingState.IDLE) AutosaveStore.clear(context)
+                if (ok && TrackRecorder.state.value == RecordingState.IDLE) AutosaveStore.clearCurrent()
                 withContext(Dispatchers.Main) {
                     statusText = if (ok) "Als GPX gespeichert" else "GPX konnte nicht gespeichert werden"
                 }
@@ -148,7 +148,7 @@ fun TrackerScreen(onBack: () -> Unit, onPlaybackStarted: () -> Unit) {
                 val ok = runCatching {
                     context.contentResolver.openOutputStream(uri)?.use { it.write(xml.toByteArray()) }
                 }.isSuccess
-                if (ok && TrackRecorder.state.value == RecordingState.IDLE) AutosaveStore.clear(context)
+                if (ok && TrackRecorder.state.value == RecordingState.IDLE) AutosaveStore.clearCurrent()
                 withContext(Dispatchers.Main) {
                     statusText = if (ok) "Als KML gespeichert" else "KML konnte nicht gespeichert werden"
                 }
@@ -202,29 +202,34 @@ fun TrackerScreen(onBack: () -> Unit, onPlaybackStarted: () -> Unit) {
                 Text(it, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(bottom = 8.dp))
             }
 
-            // -- Wiederherstellung: eine automatische Zwischensicherung wurde gefunden, obwohl
-            // gerade nichts in der App liegt - deutet auf einen harten Abbruch während einer
-            // vorherigen Aufzeichnung hin (App "Kraft stoppen", Akku-Management, Absturz).
-            if (showRecoveryBanner) {
+            // -- Wiederherstellung: eine oder mehrere automatische Zwischensicherungen wurden
+            // gefunden, obwohl gerade nichts in der App liegt - deutet auf einen harten Abbruch
+            // während einer vorherigen Aufzeichnung hin (App "Kraft stoppen", Akku-Management,
+            // Absturz, Reboot). Mehrere Einträge sind möglich, wenn das mehrfach hintereinander
+            // passiert ist, ohne dass dazwischen geladen/verworfen wurde - jede frühere
+            // Aufzeichnung hat ihre eigene Datei, also geht dabei keine andere verloren.
+            recoverable.forEach { entry ->
                 Card(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
                     Column(modifier = Modifier.padding(12.dp)) {
                         Text(
-                            "Automatische Zwischensicherung einer vorherigen Aufzeichnung gefunden.",
+                            "Automatische Zwischensicherung gefunden: \"${entry.trackName}\" " +
+                                "(${entry.pointCount} Punkt(e)).",
                             style = MaterialTheme.typography.bodyMedium
                         )
                         Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End) {
                             TextButton(onClick = {
-                                AutosaveStore.clear(context)
-                                showRecoveryBanner = false
+                                AutosaveStore.discard(entry)
+                                recoverable = recoverable - entry
                             }) { Text("Verwerfen") }
                             Spacer(Modifier.width(8.dp))
                             Button(onClick = {
-                                val loaded = AutosaveStore.load(context)
+                                val loaded = AutosaveStore.load(entry)
                                 if (loaded.size >= 2) {
                                     TrackRecorder.loadExternal(loaded)
-                                    statusText = "${loaded.size} Punkt(e) aus Zwischensicherung geladen"
+                                    TrackRecorder.setTrackName(entry.trackName)
+                                    statusText = "${loaded.size} Punkt(e) aus Zwischensicherung \"${entry.trackName}\" geladen"
                                 }
-                                showRecoveryBanner = false
+                                recoverable = recoverable - entry
                             }) { Text("Laden") }
                         }
                     }
@@ -377,7 +382,7 @@ fun TrackerScreen(onBack: () -> Unit, onPlaybackStarted: () -> Unit) {
                         ) {
                             IconButton(onClick = {
                                 TrackRecorder.clear()
-                                AutosaveStore.clear(context)
+                                AutosaveStore.clearCurrent()
                             }) {
                                 Icon(Icons.Default.Delete, contentDescription = "Aufzeichnung verwerfen")
                             }

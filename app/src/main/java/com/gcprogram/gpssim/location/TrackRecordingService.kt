@@ -18,13 +18,6 @@ import androidx.core.content.ContextCompat
 import com.gcprogram.gpssim.R
 import com.gcprogram.gpssim.geo.RecordedPoint
 import com.gcprogram.gpssim.recording.AutosaveStore
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
 
 /**
  * Foreground-Service für die GPS-Aufzeichnung - läuft unabhängig von der sichtbaren App weiter
@@ -33,23 +26,24 @@ import kotlinx.coroutines.launch
  * ob sie tatsächlich übernommen werden (nur während RecordingState.RECORDING), entscheidet der
  * Recorder selbst.
  *
- * Schreibt zusätzlich alle paar Minuten eine automatische Zwischensicherung (siehe
- * [AutosaveStore]) sowie einmal beim Beenden - ein Sicherheitsnetz, falls der Prozess vor dem
- * bewussten "Speichern" endet (App "Kraft stoppen", Akku-Management, Absturz).
+ * Schreibt jeden eintreffenden GPS-Fix SOFORT fortlaufend in die automatische Zwischensicherung
+ * (siehe [AutosaveStore.appendPoint]) statt nur periodisch den gesamten Track neu zu schreiben -
+ * bei einem harten Abbruch (App "Kraft stoppen", Akku-Management, Absturz, Reboot) fehlt dadurch
+ * höchstens der eine gerade eintreffende Punkt, nicht mehrere Minuten oder eine ganze Tour.
  */
 class TrackRecordingService : Service() {
 
     private lateinit var locationManager: LocationManager
     private var listener: LocationListener? = null
-    private val serviceScope = CoroutineScope(SupervisorJob())
-    private var autosaveJob: Job? = null
 
     override fun onCreate() {
         super.onCreate()
         locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
         startForeground(NOTIFICATION_ID, buildNotification())
+        // Eigene, zeitstempelbenannte Sicherungsdatei NUR für diese eine Aufzeichnung (siehe
+        // AutosaveStore-Kommentar) - rührt frühere, noch nicht abgeholte Sicherungen nicht an.
+        AutosaveStore.startSession(this, TrackRecorder.trackName.value)
         registerListener()
-        startAutosaveLoop()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
@@ -57,24 +51,10 @@ class TrackRecordingService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         listener?.let { l -> runCatching { locationManager.removeUpdates(l) } }
-        // Letzte Sicherung beim regulären Stopp - danach löscht TrackerScreen sie wieder, sobald
-        // bewusst exportiert oder verworfen wurde (siehe AutosaveStore.clear()).
-        writeAutosave()
-        autosaveJob?.cancel()
-        serviceScope.cancel()
-    }
-
-    private fun startAutosaveLoop() {
-        autosaveJob = serviceScope.launch {
-            while (isActive) {
-                delay(AUTOSAVE_INTERVAL_MS)
-                writeAutosave()
-            }
-        }
-    }
-
-    private fun writeAutosave() {
-        AutosaveStore.write(this, TrackRecorder.points.value, TrackRecorder.trackName.value)
+        // Schließende GPX-Tags anhängen, damit die Sicherungsdatei beim regulären Stopp ein
+        // vollständiges Dokument ist - TrackerScreen löscht sie danach, sobald bewusst exportiert
+        // oder verworfen wurde (siehe AutosaveStore.clearCurrent()).
+        AutosaveStore.finalizeSession()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -93,15 +73,17 @@ class TrackRecordingService : Service() {
                 if (location.provider == LocationManager.GPS_PROVIDER && MockLocationController.serviceActive.value) {
                     return
                 }
-                TrackRecorder.addPoint(
-                    RecordedPoint(
-                        latitude = location.latitude,
-                        longitude = location.longitude,
-                        timestampMillis = System.currentTimeMillis(),
-                        altitude = if (location.hasAltitude()) location.altitude else null,
-                        speedMps = if (location.hasSpeed()) location.speed else null
-                    )
+                val point = RecordedPoint(
+                    latitude = location.latitude,
+                    longitude = location.longitude,
+                    timestampMillis = System.currentTimeMillis(),
+                    altitude = if (location.hasAltitude()) location.altitude else null,
+                    speedMps = if (location.hasSpeed()) location.speed else null,
+                    accuracyMeters = if (location.hasAccuracy()) location.accuracy else null
                 )
+                TrackRecorder.addPoint(point)
+                // Sofort anhängen statt nur periodisch - siehe Klassenkommentar/AutosaveStore.
+                AutosaveStore.appendPoint(point)
             }
         }
         listener = l
@@ -138,7 +120,6 @@ class TrackRecordingService : Service() {
         private const val CHANNEL_ID = "track_recording_channel"
         private const val NOTIFICATION_ID = 1002
         private const val MIN_DISTANCE_M = 3f
-        private const val AUTOSAVE_INTERVAL_MS = 3 * 60 * 1000L
 
         fun start(context: Context) {
             ContextCompat.startForegroundService(context, Intent(context, TrackRecordingService::class.java))
