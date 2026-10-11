@@ -1,5 +1,6 @@
 package com.gcprogram.gpssim.recording
 
+import com.gcprogram.gpssim.BuildConfig
 import com.gcprogram.gpssim.geo.RecordedPoint
 import java.time.Instant
 import java.time.format.DateTimeFormatter
@@ -18,6 +19,12 @@ object KmlTrackExporter {
         sb.append("<kml xmlns=\"http://www.opengis.net/kml/2.2\" xmlns:gx=\"http://www.google.com/kml/ext/2.2\">\n")
         sb.append("  <Document>\n")
         sb.append("    <name>").append(escape(trackName)).append("</name>\n")
+        // App-Name + installierte Version - KML kennt kein eigenes "creator"-Attribut wie GPX,
+        // darum als <description> auf Document-Ebene (siehe GpxTrackExporter.CREATOR für die
+        // Begründung).
+        sb.append("    <description>Aufgezeichnet mit GPS Simulator ")
+            .append(BuildConfig.VERSION_NAME).append(" (build ").append(BuildConfig.VERSION_CODE)
+            .append(")</description>\n")
         sb.append("    <Placemark>\n")
         sb.append("      <name>").append(escape(trackName)).append("</name>\n")
         sb.append("      <gx:Track>\n")

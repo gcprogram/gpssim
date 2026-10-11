@@ -12,8 +12,8 @@ android {
         applicationId = "com.gcprogram.gpssim"
         minSdk = 29
         targetSdk = 35
-        versionCode = 12
-        versionName = "0.7.3"
+        versionCode = 13
+        versionName = "0.8.0"
     }
 
     buildTypes {
@@ -34,6 +34,10 @@ android {
 
     buildFeatures {
         compose = true
+        // Für BuildConfig.VERSION_NAME/VERSION_CODE - genutzt von GpxTrackExporter/KmlTrackExporter,
+        // damit der GPX/KML-"creator"-Eintrag immer die tatsächlich installierte Version trägt (siehe
+        // dort) - sonst in AGP 8+ standardmäßig deaktiviert.
+        buildConfig = true
     }
 
     packaging {
