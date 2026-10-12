@@ -36,6 +36,10 @@ class TrackRecordingService : Service() {
     private lateinit var locationManager: LocationManager
     private var listener: LocationListener? = null
 
+    // Letzter als plausibel akzeptierter Punkt - Referenz für GpsFixFilter.isPlausible() beim
+    // nächsten eintreffenden Fix. Bleibt unverändert, wenn ein Fix verworfen wird (siehe dort).
+    private var lastAccepted: RecordedPoint? = null
+
     override fun onCreate() {
         super.onCreate()
         locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
@@ -73,14 +77,28 @@ class TrackRecordingService : Service() {
                 if (location.provider == LocationManager.GPS_PROVIDER && MockLocationController.serviceActive.value) {
                     return
                 }
+                val now = System.currentTimeMillis()
+                val accuracy = if (location.hasAccuracy()) location.accuracy else null
+
+                // Ausreißer verwerfen (siehe GpsFixFilter) - GPS_PROVIDER UND NETWORK_PROVIDER laufen
+                // bewusst beide gleichzeitig (NETWORK_PROVIDER ist drinnen oft die einzige Quelle und
+                // meist ~20m genau), aber genau deshalb kann ein einzelner Fix stark daneben liegen.
+                // Ein physikalisch unmöglicher Sprung wird NICHT aufgezeichnet - weder in TrackRecorder
+                // noch in die Autosave-Datei - der zuletzt akzeptierte Punkt bleibt die Referenz für
+                // den nächsten Fix.
+                if (!GpsFixFilter.isPlausible(lastAccepted, location.latitude, location.longitude, now, accuracy)) {
+                    return
+                }
+
                 val point = RecordedPoint(
                     latitude = location.latitude,
                     longitude = location.longitude,
-                    timestampMillis = System.currentTimeMillis(),
+                    timestampMillis = now,
                     altitude = if (location.hasAltitude()) location.altitude else null,
                     speedMps = if (location.hasSpeed()) location.speed else null,
-                    accuracyMeters = if (location.hasAccuracy()) location.accuracy else null
+                    accuracyMeters = accuracy
                 )
+                lastAccepted = point
                 TrackRecorder.addPoint(point)
                 // Sofort anhängen statt nur periodisch - siehe Klassenkommentar/AutosaveStore.
                 AutosaveStore.appendPoint(point)

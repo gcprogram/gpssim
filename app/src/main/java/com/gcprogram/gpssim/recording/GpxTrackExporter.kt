@@ -1,5 +1,6 @@
 package com.gcprogram.gpssim.recording
 
+import com.gcprogram.gpssim.BuildConfig
 import com.gcprogram.gpssim.geo.RecordedPoint
 import java.time.Instant
 import java.time.format.DateTimeFormatter
@@ -19,12 +20,18 @@ object GpxTrackExporter {
     // sich darum Header/Namespace/Fragment-Logik, damit es nur eine Stelle für das GPX-Format gibt.
     internal const val EXT_NS = "http://gpssim.gcprogram.com/gpx-extensions/1/0"
 
+    // App-Name + tatsächlich installierte Version im "creator"-Attribut - sonst beim Vergleich
+    // zweier Aufzeichnungen (z.B. gegen ein anderes Tool) nicht erkennbar, mit welchem Stand der
+    // App eine bestimmte Datei aufgenommen wurde (siehe Vergleich mit Geo Tracker, Okt. 2026).
+    private val CREATOR = "GPS Simulator ${BuildConfig.VERSION_NAME} (build ${BuildConfig.VERSION_CODE})"
+
     /** Öffnender Teil (XML-Deklaration bis `<trkseg>`) - von [AutosaveStore] beim Start einer
      * neuen Aufzeichnung einmalig geschrieben, bevor einzelne Punkte nachträglich angehängt werden. */
     internal fun header(trackName: String): String {
         val sb = StringBuilder()
         sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n")
-        sb.append("<gpx version=\"1.1\" creator=\"GPS Simulator\" xmlns=\"http://www.topografix.com/GPX/1/1\"")
+        sb.append("<gpx version=\"1.1\" creator=\"").append(escape(CREATOR))
+            .append("\" xmlns=\"http://www.topografix.com/GPX/1/1\"")
         sb.append(" xmlns:gpssim=\"").append(EXT_NS).append("\">\n")
         sb.append("  <trk>\n")
         sb.append("    <name>").append(escape(trackName)).append("</name>\n")

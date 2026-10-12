@@ -52,6 +52,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.gcprogram.gpssim.BuildConfig
 import com.gcprogram.gpssim.location.BatteryOptimization
 import com.gcprogram.gpssim.location.MockLocationController
 import com.gcprogram.gpssim.location.MockLocationService
@@ -188,7 +189,10 @@ fun TrackerScreen(onBack: () -> Unit, onPlaybackStarted: () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("GPS-Tracker") },
+                // Versionsnummer direkt im Titel sichtbar - bisher gab es dafür keine Stelle in
+                // der GUI (siehe Chat Okt. 2026: beim Diagnostizieren eines Track-Qualitätsproblems
+                // ließ sich die installierte Version nicht ermitteln).
+                title = { Text("GPS-Tracker · v${BuildConfig.VERSION_NAME}") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "Zurück zur Karte")
